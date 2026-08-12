@@ -1,14 +1,15 @@
 -- Los Matteos.lua (loadstring target)
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService      = game:GetService("TweenService")
 
 local Trove           = require(ReplicatedStorage.Packages.Trove)
-local CreateTween     = require(ReplicatedStorage.Packages.CreateTween)
 local EvLightning     = require(ReplicatedStorage.Packages.EvLightning)
 local Shake           = require(ReplicatedStorage.Packages.Shake)
 local ShakePresets    = require(ReplicatedStorage.Shared.ShakePresets)
 local SoundCtrl       = require(ReplicatedStorage.Controllers.SoundController)
 local EventController = require(ReplicatedStorage.Controllers.EventController)
+local MapInfo         = require(ReplicatedStorage.Shared.MapInformation)
 
 local EVENT_NAME = "Los Matteos"
 
@@ -34,67 +35,37 @@ trove:Add(function()
     ReplicatedStorage:SetAttribute("LosMatteosEventNightTime", nil)
 end)
 
+-- ── Spawn position ────────────────────────────────────────────────────────────
+
+local spawnPos = ReplicatedStorage:GetAttribute("LosMatteosSpawn")
+if not spawnPos then
+    spawnPos = MapInfo.MapCenter.Position
+    local rp = RaycastParams.new()
+    rp.FilterType = Enum.RaycastFilterType.Include
+    rp.FilterDescendantsInstances = { workspace.Events["Los Matteos"].Areas }
+    local hit = workspace:Raycast(spawnPos, Vector3.new(0, -25, 0), rp)
+    if hit then
+        spawnPos = Vector3.new(spawnPos.X, hit.Position.Y, spawnPos.Z)
+    end
+end
+
 -- ── Roots ─────────────────────────────────────────────────────────────────────
 
 trove:Add(task.delay(math.max(0, timeLeftFor(7)), function()
     local rootsSound = ReplicatedStorage.Sounds.Events["Los Matteos"].Roots
     rootsSound:Play()
 
-    local roots = game:GetObjects("rbxassetid://76357454979877")[1]
-    roots.Name   = "Roots"
-    roots.Parent = workspace
-    trove:Add(roots)
-
-    local mapCenterPart = workspace:FindFirstChild("MapCenterGround")
-    local centerPos = mapCenterPart and mapCenterPart.Position or Vector3.new(0, 0, 0)
-
-    local entries = {}
-    for _, d in roots:GetDescendants() do
-        if d:IsA("BasePart") then
-            table.insert(entries, {
-                part     = d,
-                distance = (d.Position - centerPos).Magnitude,
-            })
-            d.Parent = nil
-        end
+    local obj = game:GetObjects("rbxassetid://76357454979877")[1]
+    if obj then
+        obj.Name = "Roots"
+        obj:PivotTo(CFrame.new(spawnPos))
+        obj.Parent = workspace
+        trove:Add(obj)
     end
 
-    table.sort(entries, function(a, b) return a.distance < b.distance end)
+    task.wait(0.5)
 
-    local minD  = entries[1] and entries[1].distance or 0
-    local maxD  = entries[#entries] and entries[#entries].distance or 1
-    local range = math.max(maxD - minD, 1)
-    local DURATION = 5
-
-    local lastDelay    = 0
-    local lastTweenDur = 0.1
-
-    for i, entry in entries do
-        local norm     = (entry.distance - minD) / range
-        local delay    = norm * DURATION
-        local nextNorm = entries[i + 1] and ((entries[i + 1].distance - minD) / range) or (norm + 0.02)
-        local tweenDur = math.max((nextNorm - norm) * DURATION, 0.05)
-
-        if i == #entries then
-            lastDelay    = delay
-            lastTweenDur = tweenDur
-        end
-
-        trove:Add(task.delay(delay, function()
-            if not roots.Parent then return end
-            entry.part.Parent = roots
-
-            local orig = entry.part.Size
-            entry.part.Size = Vector3.new(orig.X, 0, orig.Z)
-            CreateTween(
-                entry.part,
-                TweenInfo.new(tweenDur, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
-                { Size = orig }
-            )
-        end))
-    end
-
-    trove:Add(task.delay(lastDelay + lastTweenDur, function()
+    trove:Add(task.delay(5, function()
         rootsSound:Stop()
         rootsSound.Looped = false
     end))
@@ -152,8 +123,8 @@ local function fireLocalLightning(strikePos)
     local lines = bolt:GetLines()
     table.sort(lines, function(a, b) return a.origin.Y > b.origin.Y end)
 
-    local highestY = lines[1].origin.Y
-    local yRange   = math.max(highestY - lines[#lines].origin.Y, 1)
+    local highestY  = lines[1].origin.Y
+    local yRange    = math.max(highestY - lines[#lines].origin.Y, 1)
     local baseDelay = bolt.random:NextInteger(10, 20) / 100
 
     local tweenedParts = {}
@@ -172,13 +143,19 @@ local function fireLocalLightning(strikePos)
             part.Parent       = boltModel
             tweenedParts[i]   = part
 
-            CreateTween(
+            TweenService:Create(
                 part,
                 TweenInfo.new(0.05, Enum.EasingStyle.Linear, Enum.EasingDirection.Out, 0, false, t),
                 { Transparency = line.transparency }
-            )
+            ):Play()
         end
     end
+
+    SoundCtrl:PlaySound(
+        ReplicatedStorage.Sounds.Events["Los Matteos"]["Lightning Strike"],
+        boltStart,
+        false
+    )
 
     task.delay(baseDelay + 0.05, function()
         SoundCtrl:PlaySound(
@@ -194,11 +171,11 @@ local function fireLocalLightning(strikePos)
                 task.wait(0.1)
                 p.Transparency = 1
                 task.wait(0.1)
-                CreateTween(
+                TweenService:Create(
                     p,
                     TweenInfo.new(0.1, Enum.EasingStyle.Linear, Enum.EasingDirection.Out, 0, true),
                     { Transparency = 0.4 }
-                )
+                ):Play()
             end)
         end
 
@@ -207,13 +184,6 @@ local function fireLocalLightning(strikePos)
             bolt.destroyed = true
         end)
     end)
-
-    -- "Lightning Strike" fires at bolt origin when bolt renders — exact from decompiled
-    SoundCtrl:PlaySound(
-        ReplicatedStorage.Sounds.Events["Los Matteos"]["Lightning Strike"],
-        boltStart,
-        false
-    )
 
     boltModel.Parent = workspace.CurrentCamera
     bolt.drew        = true
@@ -237,11 +207,9 @@ trove:Add(task.delay(math.max(0, timeLeftFor(8)), function()
                 math.random(-s.Z / 2, s.Z / 2)
             )).Position
         else
-            local angle  = math.random() * math.pi * 2
-            local dist   = math.random(20, 80)
-            local base   = workspace:FindFirstChild("MapCenterGround")
-            local origin = base and base.Position or Vector3.new(0, 0, 0)
-            strikePos    = origin + Vector3.new(math.cos(angle) * dist, 0, math.sin(angle) * dist)
+            local angle = math.random() * math.pi * 2
+            local dist  = math.random(20, 80)
+            strikePos   = spawnPos + Vector3.new(math.cos(angle) * dist, 0, math.sin(angle) * dist)
         end
 
         task.spawn(fireLocalLightning, strikePos)
