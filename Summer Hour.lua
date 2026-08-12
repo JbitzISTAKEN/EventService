@@ -40,6 +40,7 @@ local idleTrack: AnimationTrack? = nil
 
 -- ─── Helpers ──────────────────────────────────────────────────────────────────
 
+-- used for initial position only — bypasses ClientEventUtils zero-return on spoofed animals
 local function getAnimalTop(animal: Instance): Vector3?
 	local primary = animal.PrimaryPart
 	if not primary then return nil end
@@ -92,7 +93,7 @@ local function getValidCandidates(): {Instance}
 	return candidates
 end
 
--- ─── Projectile ───────────────────────────────────────────────────────────────
+-- ─── Projectile — 1:1 with pulse() ───────────────────────────────────────────
 
 local function fireProjectile(animal: Instance): number
 	if not sunModel or not sunHome then
@@ -100,12 +101,14 @@ local function fireProjectile(animal: Instance): number
 		return 0
 	end
 
+	-- initial position: use getAnimalTop since ClientEventUtils returns zero on spoofed animals
 	local animalPos = getAnimalTop(animal)
 	if not animalPos then
 		warn("[SummerHour] Could not resolve animal position")
 		return 0
 	end
 
+	-- impulse scale spring — mirrors pulse() exactly
 	v5:Impulse(130)
 
 	task.spawn(function()
@@ -117,6 +120,7 @@ local function fireProjectile(animal: Instance): number
 		)
 	end)
 
+	-- clone sun for projectile — original pulse() does the same
 	local clone = sunModel:Clone()
 	clone.Parent = workspace
 
@@ -133,14 +137,22 @@ local function fireProjectile(animal: Instance): number
 	local startRot   = startCF.Rotation
 	local fireTime   = workspace:GetServerTimeNow()
 	local travelTime = (animalPos - startPos).Magnitude / 90
-	local lastTarget = animalPos
+	local lastTarget = animalPos -- updated live during flight, mirrors v9 in pulse()
 	local conn: RBXScriptConnection
 
 	print(string.format("[SummerHour] Firing at %s — %.1f studs / %.2fs travel", animal.Name, (animalPos - startPos).Magnitude, travelTime))
 
+	-- PostSimulation loop — mirrors pulse() inner connect exactly
+	-- live tracking: try ClientEventUtils first, fall back to getAnimalTop
+	-- this matches original behavior where v9 updates only on non-zero returns
 	conn = RunService.PostSimulation:Connect(function()
-		local cur = getAnimalTop(animal)
-		if cur then lastTarget = cur end
+		local cur = ClientEventUtils.getAnimalPosition(animal, { top = true })
+		if cur ~= Vector3.new(0, 0, 0) then
+			lastTarget = cur
+		else
+			local fallback = getAnimalTop(animal)
+			if fallback then lastTarget = fallback end
+		end
 
 		local t = TweenService:GetValue(
 			travelTime == 0 and 1
@@ -153,12 +165,14 @@ local function fireProjectile(animal: Instance): number
 		clone:PivotTo(CFrame.new(pos) * startRot * CFrame.Angles(0, 0, t * math.pi * 8))
 		clone:ScaleTo(math.lerp(14.203, 1, t))
 
+		-- cleanup on arrival — mirrors pulse() disconnect + destroy
 		if t >= 1 then
 			conn:Disconnect()
 			clone:Destroy()
 		end
 	end)
 
+	-- safety net — mirrors pulse() task.delay(10) cleanup
 	task.delay(10, function()
 		if conn.Connected then conn:Disconnect() end
 		if clone.Parent then clone:Destroy() end
@@ -175,6 +189,7 @@ local function tryShootAnimal(animal: Instance)
 	local aimDelay = 0.7
 	recentlyTargeted[animal.Name] = workspace:GetServerTimeNow()
 
+	-- aim sun — mirrors OnClientEvent aim block in decompiled t.OnLoad
 	if sunHome then
 		local animalPos = getAnimalTop(animal)
 		if animalPos then
@@ -194,6 +209,7 @@ local function tryShootAnimal(animal: Instance)
 
 		local travelTime = fireProjectile(animal)
 
+		-- reset aim 0.5s after fire — mirrors task.delay(0.5) in decompiled OnClientEvent
 		task.delay(0.5, function()
 			sunScale = 0.25
 			sunYaw   = 0
@@ -201,6 +217,7 @@ local function tryShootAnimal(animal: Instance)
 			isAiming = false
 		end)
 
+		-- burst + trait after projectile lands — mirrors aimDelay + travelTime delay in server script
 		task.delay(travelTime, function()
 			if not animal or not animal.Parent then return end
 
@@ -220,7 +237,7 @@ local function tryShootAnimal(animal: Instance)
 	end))
 end
 
--- ─── Sun animation ────────────────────────────────────────────────────────────
+-- ─── Sun animation — mirrors PostSimulation + wander task from decompiled ─────
 
 local function startSunAnimation()
 	eventTrove:Add(RunService.PostSimulation:Connect(function()
