@@ -1,6 +1,6 @@
--- LocalScript: Chicleteira Bicicleteira Client Spawner
--- No RemoteEvents. Standing chicleteira observed from workspace tag.
--- Bike spawned inline. Raycast inline. Spray tick inline.
+-- LocalScript: Chicleteira Bicicleteira
+-- No RemoteEvents. No raycast. 1:1 to controller + service.
+-- Bikes run first. Standing chicleteiras spawn after bikes complete.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
@@ -22,6 +22,7 @@ local BIKE_SPEED         = 35
 local SPRAY_COOLDOWN_MIN = 4
 local SPRAY_COOLDOWN_MAX = 7
 local SPRAY_REACH        = 50
+local SPRAY_HOLD         = 1.4
 local PAINT_TRAIT        = "Paint"
 
 local DEFAULT_LANES = {
@@ -33,33 +34,15 @@ local PATH_END_Z   =  251.706
 
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
 
+local eventData  = EventController:GetActiveEventData(EVENT_NAME)
 local eventTrove = Trove.new()
 local isActive   = true
 
--- ─── Raycast ─────────────────────────────────────────────────────────────────
-
-local RAY_PARAMS = RaycastParams.new()
-RAY_PARAMS.FilterType = Enum.RaycastFilterType.Include
-RAY_PARAMS.FilterDescendantsInstances = {
-    workspace:FindFirstChild("Map") or workspace,
-    workspace.Terrain,
-}
-
-local function stickToGround(position: Vector3): Vector3
-    local result = workspace:Raycast(
-        position + Vector3.new(0, 10, 0),
-        Vector3.new(0, -20, 0),
-        RAY_PARAMS
-    )
-    return result and result.Position + Vector3.new(0, 0.1, 0) or position
-end
-
 -- ─── Bike spawner ────────────────────────────────────────────────────────────
 -- Mirrors decompiled OnClientEvent handler exactly.
--- jumpCF present → arc lerp blending from player Y down to ground Y.
--- jumpCF nil    → straight CFrame lerp.
+-- jumpCF present → arc lerp. jumpCF nil → straight lerp.
 
-local function spawnBike(startCF: CFrame, endCF: CFrame, speed: number, jumpCF: CFrame?)
+local function spawnBike(startCF: CFrame, endCF: CFrame, speed: number, jumpCF: CFrame?): number
     local bikeTemplate = EVENT_SCRIPT:FindFirstChild("Chicleteira Bicicleteira")
     if not bikeTemplate then
         warn("[ChicleteiraBicicleteira] Missing bike model in event script")
@@ -78,8 +61,7 @@ local function spawnBike(startCF: CFrame, endCF: CFrame, speed: number, jumpCF: 
         track:AdjustSpeed(2)
     end
 
-    local soundFolder = ReplicatedStorage.Sounds.Events["Chicleteira Bicicleteira"]
-    local bikeSound   = soundFolder:FindFirstChild("Bike")
+    local bikeSound = ReplicatedStorage.Sounds.Events["Chicleteira Bicicleteira"]:FindFirstChild("Bike")
     if bikeSound then
         local s = bikeSound:Clone()
         s.Parent = clone.PrimaryPart
@@ -124,17 +106,6 @@ end
 
 -- ─── Lane builders ───────────────────────────────────────────────────────────
 
-local function laneFromPlayerCFrame(playerCF: CFrame): (CFrame, CFrame, CFrame)
-    local x       = playerCF.X
-    local playerY = playerCF.Y
-    local groundY = DEFAULT_LANES[1].baseY
-    local rot     = CFrame.Angles(0, math.rad(180), 0)
-    local startCF = CFrame.new(x, groundY, PATH_START_Z) * rot
-    local endCF   = CFrame.new(x, groundY, PATH_END_Z)   * rot
-    local jumpCF  = CFrame.new(x, playerY, PATH_START_Z) * rot
-    return startCF, endCF, jumpCF
-end
-
 local function laneFromDefault(lane): (CFrame, CFrame)
     local rot     = CFrame.Angles(0, math.rad(180), 0)
     local startCF = CFrame.new(lane.x, lane.baseY, PATH_START_Z) * rot
@@ -143,10 +114,10 @@ local function laneFromDefault(lane): (CFrame, CFrame)
 end
 
 -- ─── Standing Chicleteira observer ───────────────────────────────────────────
--- Clones "Standing Chicleteira Bicicleteira" from EVENT_SCRIPT.
--- Welds are not needed — model is pivoted to the tag part's CFrame and
--- parented under it so it moves with the tag part naturally.
--- Idle + Painting animations, ForceSpray attribute drives spray VFX + look-at.
+-- Only called after bikes have completed their run.
+-- Clones "Standing Chicleteira Bicicleteira" from EVENT_SCRIPT and
+-- parents directly to workspace. Idle + Painting anims. ForceSpray
+-- drives spray VFX, painting animation, and Spr look-at.
 
 local function initStandingObserver()
     eventTrove:Add(Observers.observeTag("Event_ChicleteiraBicicleteira", function(tagPart)
@@ -165,7 +136,7 @@ local function initStandingObserver()
 
         local animator = standModel.AnimationController.Animator
 
-        -- Idle track
+        -- Idle
         local idleAnim  = EVENT_SCRIPT:FindFirstChild("Idle")
         local idleTrack: AnimationTrack?
         if idleAnim then
@@ -179,7 +150,7 @@ local function initStandingObserver()
             idleTrack:Play()
         end
 
-        -- Painting track
+        -- Painting
         local paintingAnim  = EVENT_SCRIPT:FindFirstChild("Painting")
         local paintingTrack: AnimationTrack?
         if paintingAnim then
@@ -192,7 +163,7 @@ local function initStandingObserver()
             paintingTrack.Priority = Enum.AnimationPriority.Action4
         end
 
-        -- Shake marker → play sound unless Painting is active
+        -- Shake marker → sound only when Painting isn't running
         if idleTrack then
             standTrove:Add(idleTrack:GetMarkerReachedSignal("Shake"):Connect(function()
                 if paintingTrack and paintingTrack.IsPlaying then return end
@@ -213,7 +184,7 @@ local function initStandingObserver()
             )
         end)
 
-        -- ForceSpray: spray sound → painting anim → VFX on/off
+        -- ForceSpray attribute → spray sound, painting anim, VFX on/off
         standTrove:Add(tagPart:GetAttributeChangedSignal("ForceSpray"):Connect(function()
             if not tagPart:GetAttribute("ForceSpray") then return end
             task.spawn(function()
@@ -238,7 +209,7 @@ local function initStandingObserver()
             end
         end))
 
-        -- Spr look-at tick — tracks ForceSpray animal, returns to rest pivot
+        -- Spr look-at: tracks ForceSpray animal, returns to rest when nil
         standTrove:Add(Timer.Simple(0.1, function()
             local sprayName = tagPart:GetAttribute("ForceSpray")
             local targetPos: Vector3?
@@ -268,8 +239,8 @@ local function initStandingObserver()
 end
 
 -- ─── Spray tick ──────────────────────────────────────────────────────────────
--- Picks a random tagged stand, finds the closest animal within SPRAY_REACH,
--- sets ForceSpray on the stand part, waits SPRAY_HOLD, appends Paint trait.
+-- Picks random tagged stand, finds closest animal within SPRAY_REACH,
+-- sets ForceSpray, waits SPRAY_HOLD, appends Paint trait locally.
 
 local function initSprayTick()
     eventTrove:Add(task.spawn(function()
@@ -298,7 +269,6 @@ local function initSprayTick()
 
             if not closest then continue end
 
-            -- Check for existing Paint trait before applying
             local traitsRaw = closest:GetAttribute("Traits") or "[]"
             local ok, traits = pcall(HttpService.JSONDecode, HttpService, traitsRaw)
             if not ok or type(traits) ~= "table" then continue end
@@ -312,7 +282,6 @@ local function initSprayTick()
             stand:SetAttribute("ForceSpray", closest.Name)
             task.wait(SPRAY_HOLD)
 
-            -- Re-check animal still valid after wait
             if closest and closest.Parent then
                 table.insert(traits, PAINT_TRAIT)
                 closest:SetAttribute("Traits", HttpService:JSONEncode(traits))
@@ -323,17 +292,19 @@ local function initSprayTick()
     end))
 end
 
--- ─── Bike launch ─────────────────────────────────────────────────────────────
--- Waits the server-side 3s delay + startedAt offset, then fires both
--- default lanes. No ritual position support client-side (server handles
--- player CFrame collection; client just runs default lanes locally).
+-- ─── Main ────────────────────────────────────────────────────────────────────
+-- Order matches server exactly:
+--   1. Wait startedAt + 3 (server fires SpawnChicleteira at this point)
+--   2. Fire both default lanes, collect max travel time
+--   3. Wait travel time (bikes complete their run)
+--   4. Standing observer + spray tick activate
 
-local function initBikeLaunch()
-    local eventData = EventController:GetActiveEventData(EVENT_NAME)
-    local delay     = (eventData.startedAt + 3) - workspace:GetServerTimeNow()
-    if delay > 0 then task.wait(delay) end
+local function main()
+    local launchDelay = (eventData.startedAt + 3) - workspace:GetServerTimeNow()
+    if launchDelay > 0 then task.wait(launchDelay) end
     if not isActive then return end
 
+    -- Fire both default lanes simultaneously, track longest travel time
     local maxDuration = 0
     for _, lane in ipairs(DEFAULT_LANES) do
         local startCF, endCF = laneFromDefault(lane)
@@ -341,15 +312,12 @@ local function initBikeLaunch()
         if duration > maxDuration then maxDuration = duration end
     end
 
-    -- After bikes clear, stands become active — observer already running
-end
+    -- Wait for bikes to finish before standing chicleteiras appear
+    task.wait(maxDuration)
+    if not isActive then return end
 
--- ─── Main ────────────────────────────────────────────────────────────────────
-
-local function main()
     initStandingObserver()
     initSprayTick()
-    initBikeLaunch()
 
     while EventController:GetActiveEventData(EVENT_NAME) do task.wait(1) end
 
