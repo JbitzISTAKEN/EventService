@@ -12,7 +12,6 @@ local VFX                        = require(ReplicatedStorage.Shared.VFX)
 local SoundController            = require(ReplicatedStorage.Controllers.SoundController)
 local ShakePresets               = require(ReplicatedStorage.Shared.ShakePresets)
 local Shake                      = require(ReplicatedStorage.Packages.Shake)
-local Observers                  = require(ReplicatedStorage.Packages.Observers)
 local EffectController           = require(ReplicatedStorage.Controllers.EffectController)
 local SkullEmojiEffectController = require(ReplicatedStorage.Controllers.SkullEmojiEffectController)
 
@@ -35,20 +34,19 @@ shakeBase.FadeOutTime       = 0.6
 shakeBase.PositionInfluence = Vector3.new(0.5, 0.5, 0.5)
 shakeBase.RotationInfluence = Vector3.new(2.5, 0.5, 0.5)
 
-local trove      = Trove.new()
+local trove       = Trove.new()
 local recentlyHit = {}
-local v22        = nil
 
 -- ─── Model ────────────────────────────────────────────────────────────────────
 
-local clone = Mygame43Model:Clone()
-clone.Parent = workspace
-clone:AddTag("Mygame43")
-trove:Add(clone)
+local v22 = Mygame43Model:Clone()
+v22.Parent = workspace
+v22:AddTag("Mygame43")
+trove:Add(v22)
 
 Sounds.Appear:Play()
 
--- Blink is a STOP effect — register it here so trove fires it on cleanup only
+-- Blink is a STOP effect — trove fires it on cleanup only
 trove:Add(function()
 	EffectController:Activate("Blink")
 end)
@@ -66,81 +64,76 @@ local function shakeCameraBasedOnProximity(pos)
 	s:Start()
 end
 
--- ─── Boss model observer ──────────────────────────────────────────────────────
+-- ─── Animations ───────────────────────────────────────────────────────────────
 
-trove:Add(Observers.observeTag("Mygame43", function(model)
-	v22 = model
+local animator = v22.Humanoid and v22.Humanoid.Animator
+if animator then
+	local idle  = animator:LoadAnimation(EventScript.Idle)
+	local spawn = animator:LoadAnimation(EventScript.Spawn)
 
-	local animator = v22.Humanoid and v22.Humanoid.Animator
-	if animator then
-		local idle  = animator:LoadAnimation(EventScript.Idle)
-		local spawn = animator:LoadAnimation(EventScript.Spawn)
+	idle:Play()
+	spawn:Play()
+	spawn.TimePosition = math.max(0, 7 - timeLeftFor(7))
 
-		idle:Play()
-		spawn:Play()
-		spawn.TimePosition = math.max(0, 7 - timeLeftFor(7))
+	trove:Add(function()
+		idle:Stop()
+		spawn:Stop()
+	end)
+end
 
-		trove:Add(function()
-			idle:Stop()
-			spawn:Stop()
-		end)
-	end
+-- ─── Floating orbs at 7.7s ────────────────────────────────────────────────────
 
-	-- Floating orbs rise at 7.7s
-	trove:Add(task.delay(math.max(0, timeLeftFor(7.7)), function()
-		for i = 1, 4 do
-			local offsetCF = CFrame.new(
-				(i - 1) * 30 + -45,
-				(i == 2 or i == 3) and 70 or 50,
-				15
-			)
-			local anchorCF = v22 and v22.HumanoidRootPart.CFrame * offsetCF or offsetCF
-			local orb = trove:Clone(EventScript.Orb)
+trove:Add(task.delay(math.max(0, timeLeftFor(7.7)), function()
+	for i = 1, 4 do
+		local offsetCF = CFrame.new(
+			(i - 1) * 30 + -45,
+			(i == 2 or i == 3) and 70 or 50,
+			15
+		)
+		local anchorCF = v22.HumanoidRootPart.CFrame * offsetCF
+		local orb = trove:Clone(EventScript.Orb)
 
-			orb.CFrame = anchorCF - Vector3.new(0, 100, 0)
-			orb.Parent = workspace
-			trove:Add(function() Spr.stop(orb) end)
+		orb.CFrame = anchorCF - Vector3.new(0, 100, 0)
+		orb.Parent = workspace
+		trove:Add(function() Spr.stop(orb) end)
 
-			local floatSpeed = Random.new():NextNumber(2, 3)
+		local floatSpeed = Random.new():NextNumber(2, 3)
 
-			trove:Add(RunService.PostSimulation:Connect(function()
-				debug.profilebegin("Mygame43:FloatOrb")
-				Spr.target(orb, 0.8, 1, {
-					Pivot = anchorCF + Vector3.new(
-						0,
-						math.sin((os.clock() + i * 90) * floatSpeed) * 4,
-						0
-					),
-				})
-				debug.profileend()
-			end))
-		end
-	end))
-
-	-- Camera focus + skull emoji at 3.7s
-	trove:Add(task.delay(math.max(0, timeLeftFor(3.7)), function()
-		if not v22 then return end
-		VFX.enable(v22)
-
-		local focusConn = RunService.PreRender:Connect(function(dt)
-			debug.profilebegin("Mygame43:Focus")
-			if not v22 or not v22.Parent then return end
-			local cf = workspace.CurrentCamera.CFrame
-			workspace.CurrentCamera.CFrame = cf:Lerp(
-				CFrame.lookAt(cf.Position, v22:GetPivot().Position),
-				math.clamp(dt ^ 0.45, 0, 0.1)
-			)
+		trove:Add(RunService.PostSimulation:Connect(function()
+			debug.profilebegin("Mygame43:FloatOrb")
+			Spr.target(orb, 0.8, 1, {
+				Pivot = anchorCF + Vector3.new(
+					0,
+					math.sin((os.clock() + i * 90) * floatSpeed) * 4,
+					0
+				),
+			})
 			debug.profileend()
-		end)
+		end))
+	end
+end))
 
-		task.delay(0.6, function()
-			focusConn:Disconnect()
-			-- Skull effect fires here — entrance, not teardown
-			SkullEmojiEffectController:Play(3, "Lower")
-		end)
-	end))
+-- ─── Camera focus + skull emoji at 3.7s ──────────────────────────────────────
 
-	return nil
+trove:Add(task.delay(math.max(0, timeLeftFor(3.7)), function()
+	if not v22 or not v22.Parent then return end
+	VFX.enable(v22)
+
+	local focusConn = RunService.PreRender:Connect(function(dt)
+		debug.profilebegin("Mygame43:Focus")
+		if not v22 or not v22.Parent then return end
+		local cf = workspace.CurrentCamera.CFrame
+		workspace.CurrentCamera.CFrame = cf:Lerp(
+			CFrame.lookAt(cf.Position, v22:GetPivot().Position),
+			math.clamp(dt ^ 0.45, 0, 0.1)
+		)
+		debug.profileend()
+	end)
+
+	task.delay(0.6, function()
+		focusConn:Disconnect()
+		SkullEmojiEffectController:Play(3, "Lower")
+	end)
 end))
 
 -- ─── Orb flight ───────────────────────────────────────────────────────────────
