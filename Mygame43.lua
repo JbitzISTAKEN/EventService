@@ -44,10 +44,6 @@ trove:Add(v22)
 
 Sounds.Appear:Play()
 
-trove:Add(function()
-	EffectController:Activate("Blink")
-end)
-
 local function shakeCameraBasedOnProximity(pos)
 	local mag = (workspace.CurrentCamera.CFrame.Position - pos).Magnitude
 	if mag > 300 then return end
