@@ -1,4 +1,4 @@
--- LocalScript: SummerHourLogic
+-- LocalScript: SummerHourLogic — Scale Method
 -- StarterPlayerScripts
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -334,11 +334,12 @@ local function main()
 		task.wait(1)
 	end
 
-	print("[SummerHour] Event ended — cleaning pussy up")
+	print("[SummerHour] Event ended — cleaning up")
 
-isActive  = false
+	isActive  = false
 	isRunning = false
 
+	-- Scale to 0 — model stays intact for next execution, just hidden
 	if sunModel and sunModel.Parent then
 		sunModel:ScaleTo(0)
 		sunModel = nil
@@ -348,4 +349,6 @@ isActive  = false
 	table.clear(recentlyTargeted)
 
 	ReplicatedStorage:SetAttribute("SummerHourEvent", nil)
+end
+
 task.spawn(main)
