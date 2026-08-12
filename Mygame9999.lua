@@ -14,16 +14,14 @@ local ShakePresets               = require(ReplicatedStorage.Shared.ShakePresets
 local Shake                      = require(ReplicatedStorage.Packages.Shake)
 local EffectController           = require(ReplicatedStorage.Controllers.EffectController)
 local SkullEmojiEffectController = require(ReplicatedStorage.Controllers.SkullEmojiEffectController)
+local EventController            = require(ReplicatedStorage.Controllers.EventController)
 
 local EventScript   = ReplicatedStorage.Controllers.EventController.Events.Mygame43
 local Mygame43Model = ReplicatedStorage:WaitForChild("Models").Events.Mygame43.mygame43
 local Sounds        = ReplicatedStorage.Sounds.Events.Mygame43
 
--- Gate: wait for server to clone and tag the model, same pattern as 4th of July waiting on Fireworks
-repeat task.wait() until CollectionService:GetTagged("Mygame43")[1]
-
-local v22       = CollectionService:GetTagged("Mygame43")[1]
-local startedAt = workspace:GetServerTimeNow()
+repeat task.wait() until EventController:GetActiveEventData("Mygame43")
+local startedAt = EventController:GetActiveEventData("Mygame43").startedAt
 
 local function timeLeftFor(t)
 	return startedAt + t - workspace:GetServerTimeNow()
@@ -40,15 +38,15 @@ shakeBase.RotationInfluence = Vector3.new(2.5, 0.5, 0.5)
 local trove       = Trove.new()
 local recentlyHit = {}
 
--- ─── Sounds ───────────────────────────────────────────────────────────────────
+local v22 = Mygame43Model:Clone()
+v22.Parent = workspace
+trove:Add(v22)
 
 Sounds.Appear:Play()
 
 trove:Add(function()
 	EffectController:Activate("Blink")
 end)
-
--- ─── Camera shake ─────────────────────────────────────────────────────────────
 
 local function shakeCameraBasedOnProximity(pos)
 	local mag = (workspace.CurrentCamera.CFrame.Position - pos).Magnitude
@@ -60,8 +58,6 @@ local function shakeCameraBasedOnProximity(pos)
 	ShakePresets.BindShakeToCamera(s)
 	s:Start()
 end
-
--- ─── Animations ───────────────────────────────────────────────────────────────
 
 local animator = v22.Humanoid and v22.Humanoid.Animator
 if animator then
@@ -75,8 +71,6 @@ if animator then
 		spawn:Stop()
 	end)
 end
-
--- ─── Floating orbs at 7.7s ────────────────────────────────────────────────────
 
 trove:Add(task.delay(math.max(0, timeLeftFor(7.7)), function()
 	for i = 1, 4 do
@@ -102,8 +96,6 @@ trove:Add(task.delay(math.max(0, timeLeftFor(7.7)), function()
 	end
 end))
 
--- ─── Camera focus + skull emoji at 3.7s ──────────────────────────────────────
-
 trove:Add(task.delay(math.max(0, timeLeftFor(3.7)), function()
 	if not v22 or not v22.Parent then return end
 	VFX.enable(v22)
@@ -124,8 +116,6 @@ trove:Add(task.delay(math.max(0, timeLeftFor(3.7)), function()
 		SkullEmojiEffectController:Play(3, "Lower")
 	end)
 end))
-
--- ─── Orb flight ───────────────────────────────────────────────────────────────
 
 local function fireOrb(seed, orbIndex, targetPos, flightDuration, didHit)
 	local originCF = CFrame.new(
@@ -203,8 +193,6 @@ local function fireOrb(seed, orbIndex, targetPos, flightDuration, didHit)
 	end))
 end
 
--- ─── Targeting ────────────────────────────────────────────────────────────────
-
 local function pruneRecents()
 	local now = workspace:GetServerTimeNow()
 	for name, t in pairs(recentlyHit) do
@@ -263,19 +251,17 @@ local function pickTarget()
 	return nil, nil, false
 end
 
--- ─── Main loop ────────────────────────────────────────────────────────────────
-
 local function loop()
 	local gate = timeLeftFor(7.7)
 	if gate > 0 then task.wait(gate) end
 
-	while CollectionService:GetTagged("Mygame43")[1] do
+	while EventController:GetActiveEventData("Mygame43") do
 		task.wait(Random.new():NextNumber(2, 4))
-		if not CollectionService:GetTagged("Mygame43")[1] then break end
+		if not EventController:GetActiveEventData("Mygame43") then break end
 
 		local numBalls = math.random(1, 2)
 		for i = 1, numBalls do
-			if not CollectionService:GetTagged("Mygame43")[1] then break end
+			if not EventController:GetActiveEventData("Mygame43") then break end
 
 			local targetPos, flightDuration, didHit = pickTarget()
 			if targetPos then
