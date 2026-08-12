@@ -326,15 +326,9 @@ ReplicatedStorage:SetAttribute("SummerHourEvent", true)
 	startSunAnimation()
 	startAttackLoop()
 
-	-- fires the instant the spoofer clears the attribute — no 1s poll lag
-	local done = Instance.new("BindableEvent")
-	eventTrove:Add(ReplicatedStorage:GetAttributeChangedSignal("SummerHourEvent"):Connect(function()
-		if ReplicatedStorage:GetAttribute("SummerHourEvent") == nil then
-			done:Fire()
-		end
-	end))
-	done.Event:Wait()
-	done:Destroy()
+	while EventController:GetActiveEventData(EVENT_NAME) do
+		task.wait(1)
+	end
 
 	print("[SummerHour] Event ended — cleaning up")
 
@@ -348,3 +342,5 @@ ReplicatedStorage:SetAttribute("SummerHourEvent", true)
 
 	eventTrove:Destroy()
 	table.clear(recentlyTargeted)
+
+	ReplicatedStorage:SetAttribute("SummerHourEvent", nil)
