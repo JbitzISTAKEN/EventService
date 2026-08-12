@@ -1,6 +1,6 @@
--- Mygame43 client loop — paste inside spoofer task.spawn after Execute succeeds
--- Replicates Phase.OnStart() targeting + fires the OnClientEvent handler directly
--- Zero remotes. Fully local. Handler logic inlined.
+-- Mygame43 local logic
+-- paste inside spoofer task.spawn after Execute succeeds
+-- call the returned stopMygame43() when spoofer expires
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
@@ -18,25 +18,36 @@ local ShakePresets     = require(ReplicatedStorage.Shared.ShakePresets)
 local Shake            = require(ReplicatedStorage.Packages.Shake)
 local Observers        = require(ReplicatedStorage.Packages.Observers)
 
-local CurrentCamera = workspace.CurrentCamera
-local trove         = Trove.new()
-local recentlyHit   = {}
-local IsActive      = true
+local CurrentCamera  = workspace.CurrentCamera
+local trove          = Trove.new()
+local recentlyHit    = {}
+local IsActive       = true
 
--- ─── Camera shake — exact copy from decompiled handler ────────────────────────
+-- the model — cloned into workspace so Observers.observeTag("Mygame43") fires
+-- v22 in the decompiled handler is this model; orb origin positions are relative to its HumanoidRootPart
+local Mygame43Model  = ReplicatedStorage:WaitForChild("Models").Events.Mygame43.mygame43
+local clone          = Mygame43Model:Clone()
+clone.Parent         = workspace
+clone:AddTag("Mygame43")
+trove:Add(clone)
 
-local shakeBase     = Shake.new()
-shakeBase.Amplitude          = 5.5
-shakeBase.Frequency          = 0.05
-shakeBase.FadeInTime         = 0
-shakeBase.FadeOutTime        = 0.6
-shakeBase.PositionInfluence  = Vector3.new(0.5, 0.5, 0.5)
-shakeBase.RotationInfluence  = Vector3.new(2.5, 0.5, 0.5)
+-- OrbSmaller and Strike/StrikeBrainrot live inside the decompiled event script instance
+local eventScript = ReplicatedStorage.Controllers.EventController.Events.Mygame43
+
+-- ─── Camera shake ─────────────────────────────────────────────────────────────
+
+local shakeBase = Shake.new()
+shakeBase.Amplitude         = 5.5
+shakeBase.Frequency         = 0.05
+shakeBase.FadeInTime        = 0
+shakeBase.FadeOutTime       = 0.6
+shakeBase.PositionInfluence = Vector3.new(0.5, 0.5, 0.5)
+shakeBase.RotationInfluence = Vector3.new(2.5, 0.5, 0.5)
 
 local function shakeCameraBasedOnProximity(pos)
     local mag = (CurrentCamera.CFrame.Position - pos).Magnitude
     if mag > 300 then return end
-    local s  = shakeBase:Clone()
+    local s = shakeBase:Clone()
     local v2 = (1 - mag / 300 * 0.5) ^ 2
     s.Amplitude         = s.Amplitude         * v2
     s.RotationInfluence = s.RotationInfluence * v2
@@ -44,19 +55,20 @@ local function shakeCameraBasedOnProximity(pos)
     s:Start()
 end
 
--- ─── Orb flight — exact logic from OnClientEvent handler ─────────────────────
--- p1=seed  p2=orbIndex  p3=targetPos  p4=flightDuration  p5=didHit
--- v22 is the tagged Mygame43 model — resolved via Observers below
+-- ─── v22 resolution ───────────────────────────────────────────────────────────
+-- Observers fires as soon as clone hits workspace with the tag
 
 local v22 = nil
-
 trove:Add(Observers.observeTag("Mygame43", function(model)
     v22 = model
     return nil
 end))
 
+-- ─── Orb flight ───────────────────────────────────────────────────────────────
+
 local function fireOrbLocally(seed, orbIndex, targetPos, flightDuration, didHit)
-    -- origin CFrame — mirrors decompiled line 163
+    -- origin — decompiled line 163
+    -- orbIndex 2 and 3 spawn at Y=70, rest at Y=50
     local originCF = CFrame.new(
         (orbIndex - 1) * 30 + -45,
         (orbIndex == 2 or orbIndex == 3) and 70 or 50,
@@ -64,9 +76,6 @@ local function fireOrbLocally(seed, orbIndex, targetPos, flightDuration, didHit)
     )
     local Position = (v22 and v22.HumanoidRootPart.CFrame * originCF or originCF).Position
 
-    -- clone OrbSmaller from the event script's children
-    -- script here refers to the EventController event script instance
-    local eventScript = ReplicatedStorage.Controllers.EventController.Events.Mygame43
     local orb = trove:Clone(eventScript.OrbSmaller)
     orb.CFrame = CFrame.new(Position)
 
@@ -76,7 +85,7 @@ local function fireOrbLocally(seed, orbIndex, targetPos, flightDuration, didHit)
     flySound:Play()
     VFX.enable(orb)
 
-    -- bezier control points — exact from decompiled lines 170-171
+    -- bezier control points — decompiled lines 170-171
     local rng = Random.new(seed)
     local cp1 = Position + (targetPos - Position) * 0.25
         + Vector3.new(
@@ -98,8 +107,16 @@ local function fireOrbLocally(seed, orbIndex, targetPos, flightDuration, didHit)
         debug.profilebegin("Mygame43:UpdateOrb")
         elapsed = elapsed + dt
 
-        local t1 = TweenService:GetValue(elapsed / flightDuration, Enum.EasingStyle.Sine, Enum.EasingDirection.In)
-        SharedEventUtils.pushPartCFrame(orb, CFrame.new(MathUtils.cubicBezier(t1, Position, cp1, cp2, targetPos)))
+        local t1 = TweenService:GetValue(
+            elapsed / flightDuration,
+            Enum.EasingStyle.Sine,
+            Enum.EasingDirection.In
+        )
+
+        SharedEventUtils.pushPartCFrame(
+            orb,
+            CFrame.new(MathUtils.cubicBezier(t1, Position, cp1, cp2, targetPos))
+        )
 
         if t1 >= 1 and conn then
             trove:Remove(conn)
@@ -110,7 +127,10 @@ local function fireOrbLocally(seed, orbIndex, targetPos, flightDuration, didHit)
 
             shakeCameraBasedOnProximity(targetPos)
 
-            local strike = (didHit and eventScript.StrikeBrainrot:Clone() or eventScript.Strike:Clone())
+            local strike = didHit
+                and eventScript.StrikeBrainrot:Clone()
+                or  eventScript.Strike:Clone()
+
             strike.Position = targetPos
             strike.Parent   = workspace
             VFX.emit(strike)
@@ -118,10 +138,16 @@ local function fireOrbLocally(seed, orbIndex, targetPos, flightDuration, didHit)
 
             if didHit then
                 SoundController:PlaySound(
-                    ReplicatedStorage.Sounds.Events["Los Matteos"].Hit, targetPos, false)
+                    ReplicatedStorage.Sounds.Events["Los Matteos"].Hit,
+                    targetPos,
+                    false
+                )
             else
                 SoundController:PlaySound(
-                    ReplicatedStorage.Sounds.Events.Mygame43.OrbHitNothing, targetPos, false)
+                    ReplicatedStorage.Sounds.Events.Mygame43.OrbHitNothing,
+                    targetPos,
+                    false
+                )
             end
         end
 
@@ -129,7 +155,7 @@ local function fireOrbLocally(seed, orbIndex, targetPos, flightDuration, didHit)
     end))
 end
 
--- ─── Targeting loop — Phase.OnStart() logic, fully local ─────────────────────
+-- ─── Targeting ────────────────────────────────────────────────────────────────
 
 local function pruneRecents()
     local now = workspace:GetServerTimeNow()
@@ -163,9 +189,9 @@ local function pickTarget()
         end
 
         if #candidates > 0 then
-            local animal   = candidates[math.random(1, #candidates)]
-            local flight   = Random.new():NextNumber(1.5, 2.5)
-            local vel      = Vector3.zero
+            local animal  = candidates[math.random(1, #candidates)]
+            local flight  = Random.new():NextNumber(1.5, 2.5)
+            local vel     = Vector3.zero
 
             if animal.PrimaryPart:IsA("BasePart") then
                 vel = animal.PrimaryPart.AssemblyLinearVelocity
@@ -216,7 +242,9 @@ task.spawn(function()
     end
 end)
 
--- cleanup — call this when spoofer expires
+-- ─── Cleanup ──────────────────────────────────────────────────────────────────
+-- call this from the spoofer expiry block before EventController:Cancel
+
 local function stopMygame43()
     IsActive = false
     trove:Destroy()
