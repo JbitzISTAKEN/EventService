@@ -252,7 +252,7 @@ local function loop()
 	if gate > 0 then task.wait(gate) end
 
 	while EventController:GetActiveEventData("Mygame43") do
-		task.wait(Random.new():NextNumber(2, 4))
+		task.wait()
 		if not EventController:GetActiveEventData("Mygame43") then break end
 
 		local numBalls = math.random(1, 2)
