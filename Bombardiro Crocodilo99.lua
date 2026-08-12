@@ -2,6 +2,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 local HttpService       = game:GetService("HttpService")
 local RunService        = game:GetService("RunService")
+local TweenService      = game:GetService("TweenService")
 
 local MathUtils        = require(ReplicatedStorage.Utils.MathUtils)
 local Trove            = require(ReplicatedStorage.Packages.Trove)
@@ -14,8 +15,9 @@ local EventController  = require(ReplicatedStorage.Controllers.EventController)
 
 local EVENT_NAME     = "Bombardiro Crocodilo"
 local EventAssets    = ReplicatedStorage.Controllers.EventController.Events[EVENT_NAME]
-local SvininaAsset   = EventAssets["Svinina Bombardino"]
-local ExplosionAsset = EventAssets["ExplosionBoom"]
+local SvininaAsset   = EventAssets["Svinina Bombardino"]   -- plane visual model
+local CrocodiloAsset = EventAssets["Bombardiro Crocodilo"] -- falling bomb model
+local ExplosionAsset = EventAssets["ExplosionBoom"]        -- BasePart VFX
 local Sounds         = ReplicatedStorage.Sounds.Events[EVENT_NAME]
 
 local SKY_OFFSET  = 200
@@ -42,6 +44,9 @@ shakeBase.RotationInfluence = Vector3.new(2.5, 0.5, 0.5)
 
 local trove       = Trove.new()
 local recentlyHit = {}
+
+-- plane hitbox (invisible BasePart) → svinina model tracks it via BulkMoveTo
+-- [plane.Name] = svinina Model in workspace
 local planeModels = {}
 
 local WanderFolder = workspace:WaitForChild("Events"):WaitForChild("Wander")
@@ -135,7 +140,7 @@ end
 
 -- ─── Plane hitbox ─────────────────────────────────────────────────────────────
 
-local function createPlane(): BasePart
+local function createPlaneHitbox(): BasePart
 	local plane = Instance.new("Part")
 	plane.Name         = HttpService:GenerateGUID(false)
 	plane.Size         = Vector3.new(10, 5, 15)
@@ -147,24 +152,14 @@ local function createPlane(): BasePart
 	return plane
 end
 
--- ─── Svinina model (plane visual) ─────────────────────────────────────────────
-
-local function attachSvininaToPlane(plane: BasePart)
-	local model = SvininaAsset:Clone()
-	model.PrimaryPart.Anchored = true
-	model.Parent = workspace
-	planeModels[plane.Name] = model
-	VFX.enable(model)
-end
-
--- ─── Plane movement ───────────────────────────────────────────────────────────
+-- ─── Plane movement — loops forever until event ends ──────────────────────────
 
 local function flyPlane(plane: BasePart)
 	while EventController:GetActiveEventData(EVENT_NAME) and plane.Parent do
 		local target   = getRandomWanderPosition()
 		local startPos = plane.Position
 		local dist     = (target - startPos).Magnitude
-		local dur      = dist / PLANE_SPEED
+		local dur      = math.max(dist / PLANE_SPEED, 0.05)
 		local elapsed  = 0
 		local done     = false
 
@@ -203,14 +198,15 @@ local function flyPlane(plane: BasePart)
 	end
 end
 
--- ─── Bomb drop ────────────────────────────────────────────────────────────────
+-- ─── Drop Bombardiro Crocodilo model as falling bomb ──────────────────────────
 
 local function dropBomb(plane: BasePart)
 	local dropPos   = plane.Position - Vector3.new(0, plane.Size.Y / 2 + 1, 0)
 	local groundY   = getGroundY()
 	local impactPos = Vector3.new(dropPos.X, groundY, dropPos.Z)
 
-	local bomb = SvininaAsset:Clone()
+	-- clone the full Bombardiro Crocodilo model — this is what falls
+	local bomb = CrocodiloAsset:Clone()
 	bomb.PrimaryPart.Anchored = true
 	bomb:PivotTo(CFrame.new(dropPos))
 	bomb.Parent = workspace
@@ -238,6 +234,7 @@ local function dropBomb(plane: BasePart)
 			trove:Remove(conn)
 			conn = nil
 
+			-- hide bomb parts, let particles finish
 			for _, d in bomb:GetDescendants() do
 				if d:IsA("BasePart") then
 					d.Transparency = 1
@@ -247,6 +244,7 @@ local function dropBomb(plane: BasePart)
 			end
 			task.delay(3, function() trove:Remove(bomb) end)
 
+			-- explosion VFX
 			local explosion = ExplosionAsset:Clone()
 			explosion.CFrame  = CFrame.new(impactPos)
 			explosion.Parent  = workspace
@@ -264,7 +262,7 @@ local function dropBomb(plane: BasePart)
 	end))
 end
 
--- ─── Bomb loop ────────────────────────────────────────────────────────────────
+-- ─── Bomb loop — steer then drop, repeat ──────────────────────────────────────
 
 local function bombLoop(plane: BasePart)
 	while EventController:GetActiveEventData(EVENT_NAME) and plane.Parent do
@@ -273,6 +271,7 @@ local function bombLoop(plane: BasePart)
 
 		local targetPos, _, didHit = pickTarget()
 
+		-- steer plane above target before dropping
 		if targetPos and didHit then
 			local above        = Vector3.new(targetPos.X, plane.Position.Y, targetPos.Z)
 			local steerDist    = (above - plane.Position).Magnitude
@@ -314,7 +313,7 @@ local function bombLoop(plane: BasePart)
 	end
 end
 
--- ─── Sync svinina visuals to plane hitbox each frame ─────────────────────────
+-- ─── Sync svinina visuals to plane hitbox CFrame every frame ─────────────────
 
 trove:Add(RunService.PreRender:Connect(function()
 	debug.profilebegin("Bombardiro:BulkMoveTo")
@@ -322,7 +321,7 @@ trove:Add(RunService.PreRender:Connect(function()
 	local frames = {}
 	for name, model in pairs(planeModels) do
 		local plane = workspace:FindFirstChild(name)
-		if plane and plane:IsA("BasePart") then
+		if plane and plane:IsA("BasePart") and model and model.Parent then
 			table.insert(parts,  model.PrimaryPart)
 			table.insert(frames, plane.CFrame)
 		end
@@ -333,34 +332,39 @@ trove:Add(RunService.PreRender:Connect(function()
 	debug.profileend()
 end))
 
--- ─── Spawn plane ──────────────────────────────────────────────────────────────
+-- ─── Spawn one plane + its svinina visual + both loops ────────────────────────
 
 local function spawnPlane()
-	local plane = createPlane()
+	local plane = createPlaneHitbox()
 	trove:Add(plane)
-	trove:Add(function()
-		local model = planeModels[plane.Name]
-		if model then model:Destroy() end
-		planeModels[plane.Name] = nil
-	end)
 
-	attachSvininaToPlane(plane)
+	-- svinina is the plane visual — lives in workspace, tracked by BulkMoveTo
+	local svinina = SvininaAsset:Clone()
+	svinina.PrimaryPart.Anchored = true
+	svinina.Parent = workspace
+	planeModels[plane.Name] = svinina
+	trove:Add(svinina)
+
+	VFX.enable(svinina)
+
 	trove:Add(task.spawn(function() flyPlane(plane) end))
 	trove:Add(task.spawn(function() bombLoop(plane) end))
 end
 
--- ─── Entry ────────────────────────────────────────────────────────────────────
+-- ─── Main loop — mirrors Mygame43 structure exactly ───────────────────────────
 
-local function main()
+local function loop()
 	local gate = timeLeftFor(8)
 	if gate > 0 then task.wait(gate) end
 
+	-- spawn all planes staggered
 	for i = 1, NUM_PLANES do
 		if not EventController:GetActiveEventData(EVENT_NAME) then break end
 		spawnPlane()
 		task.wait(0.5)
 	end
 
+	-- hold until event dies
 	while EventController:GetActiveEventData(EVENT_NAME) do
 		task.wait(1)
 	end
@@ -370,4 +374,4 @@ local function main()
 	planeModels = {}
 end
 
-task.spawn(main)
+task.spawn(loop)
