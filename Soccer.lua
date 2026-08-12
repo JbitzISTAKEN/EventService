@@ -10,11 +10,10 @@ local Players           = game:GetService("Players")
 local PhysicsService    = game:GetService("PhysicsService")
 
 local Trove            = require(ReplicatedStorage.Packages.Trove)
+local Timer            = require(ReplicatedStorage.Packages.Timer)
 local ClientEventUtils = require(ReplicatedStorage.Controllers.EventController.ClientEventUtils)
 local SharedEventUtils = require(ReplicatedStorage.Shared.SharedEventUtils)
 local SoundController  = require(ReplicatedStorage.Controllers.SoundController)
-local Timer            = require(ReplicatedStorage.Packages.Timer)
-local Random2          = Random.new()
 
 local EventScript = ReplicatedStorage.Controllers.EventController.Events.Soccer
 
@@ -24,7 +23,14 @@ local eventTrove                           = Trove.new()
 local recentlyTargeted: {[string]: number} = {}
 local isActive                             = true
 
--- ─── Physics setup ────────────────────────────────────────────────────────────
+local rng = Random.new()
+
+-- rain state — mirrors u18/u19/u20 from decompiled
+local rainEndClock  = 0
+local rainCenter    = Vector3.new(0, 0, 0)
+local rainSize      = Vector3.new(0, 0, 0)
+
+-- ─── Physics ──────────────────────────────────────────────────────────────────
 
 pcall(function()
 	if not PhysicsService:IsCollisionGroupRegistered("SoccerBall") then
@@ -33,6 +39,13 @@ pcall(function()
 	PhysicsService:CollisionGroupSetCollidable("SoccerBall", "Player", false)
 	PhysicsService:CollisionGroupSetCollidable("SoccerBall", "Animal", false)
 end)
+
+-- ─── Ball rain folder ─────────────────────────────────────────────────────────
+
+local SoccerBallRain = Instance.new("Folder")
+SoccerBallRain.Name   = "SoccerBallRain"
+SoccerBallRain.Parent = workspace
+eventTrove:Add(SoccerBallRain)
 
 -- ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -68,7 +81,6 @@ end
 
 local function getValidCandidates(): {Instance}
 	local now = workspace:GetServerTimeNow()
-
 	for name, last in pairs(recentlyTargeted) do
 		if now - last > 30 then recentlyTargeted[name] = nil end
 	end
@@ -88,19 +100,12 @@ local function getValidCandidates(): {Instance}
 	return candidates
 end
 
--- ─── Ball rain folder ─────────────────────────────────────────────────────────
-
-local SoccerBallRain = Instance.new("Folder")
-SoccerBallRain.Name  = "SoccerBallRain"
-SoccerBallRain.Parent = workspace
-eventTrove:Add(SoccerBallRain)
-
--- ─── Ball spawn — mirrors spawnBall() from decompiled ─────────────────────────
+-- ─── spawnBall — 1:1 with decompiled spawnBall() ─────────────────────────────
 
 local function spawnBall(spawnPos: Vector3, velocity: Vector3, onLand: ((Vector3) -> ())?, trackAnimal: Instance?)
 	local SoccerBall = EventScript:FindFirstChild("SoccerBall")
 	if not (SoccerBall and SoccerBall:IsA("BasePart")) then
-		warn("[Soccer] SoccerBall part not found in EventScript")
+		warn("[Soccer] SoccerBall BasePart not found in EventScript")
 		return
 	end
 
@@ -112,17 +117,21 @@ local function spawnBall(spawnPos: Vector3, velocity: Vector3, onLand: ((Vector3
 	ball.Massless              = false
 	ball.CollisionGroup        = "SoccerBall"
 	ball.CustomPhysicalProperties = PhysicalProperties.new(0.7, 0.3, 0.75, 1, 1)
-	ball.CFrame                = CFrame.new(spawnPos)
-		* CFrame.Angles(Random2:NextNumber(0, math.pi * 2), Random2:NextNumber(0, math.pi * 2), Random2:NextNumber(0, math.pi * 2))
+	ball.CFrame = CFrame.new(spawnPos)
+		* CFrame.Angles(
+			rng:NextNumber(0, math.pi * 2),
+			rng:NextNumber(0, math.pi * 2),
+			rng:NextNumber(0, math.pi * 2)
+		)
 	ball.AssemblyLinearVelocity  = velocity
 	ball.AssemblyAngularVelocity = Vector3.new(
-		Random2:NextNumber(-12, 12),
-		Random2:NextNumber(-12, 12),
-		Random2:NextNumber(-12, 12)
+		rng:NextNumber(-12, 12),
+		rng:NextNumber(-12, 12),
+		rng:NextNumber(-12, 12)
 	)
 	ball.Parent = SoccerBallRain
 
-	-- no-collide with local player character
+	-- no-collide with local character — mirrors decompiled block exactly
 	local character = Players.LocalPlayer.Character
 	if character then
 		for _, part in character:GetDescendants() do
@@ -135,9 +144,10 @@ local function spawnBall(spawnPos: Vector3, velocity: Vector3, onLand: ((Vector3
 		end
 	end
 
-	local landed  = false
-	local fading  = false
+	local landed = false
+	local fading = false
 
+	-- mirrors fadeOut() from decompiled
 	local function fadeOut()
 		if fading or not ball.Parent then return end
 		fading = true
@@ -151,12 +161,12 @@ local function spawnBall(spawnPos: Vector3, velocity: Vector3, onLand: ((Vector3
 	local touchConn: RBXScriptConnection
 	local trackConn: RBXScriptConnection
 
+	-- mirrors Touched connect from decompiled — same Y check, same folder check, same humanoid skip
 	touchConn = ball.Touched:Connect(function(hit)
 		if landed then return end
 		if ball.CFrame.Position.Y > spawnPos.Y - 20 then return end
 		if hit:IsDescendantOf(SoccerBallRain) then return end
 
-		-- if not tracking an animal, ignore humanoid models
 		if not trackAnimal then
 			local model = hit:FindFirstAncestorWhichIsA("Model")
 			if model and model:FindFirstChildWhichIsA("Humanoid") then return end
@@ -174,10 +184,11 @@ local function spawnBall(spawnPos: Vector3, velocity: Vector3, onLand: ((Vector3
 			task.spawn(onLand, ball.CFrame.Position)
 		end
 
-		task.delay(Random2:NextNumber(1, 2), fadeOut)
+		task.delay(rng:NextNumber(1, 2), fadeOut)
 	end)
 
-	-- live homing toward tracked animal — mirrors PostSimulation block in decompiled
+	-- homing toward tracked animal — mirrors PostSimulation block from decompiled exactly
+	-- lateral push * 8, capped at 60 studs/s, Y velocity preserved
 	if trackAnimal then
 		trackConn = RunService.PostSimulation:Connect(function()
 			if landed or not ball.Parent then
@@ -185,6 +196,7 @@ local function spawnBall(spawnPos: Vector3, velocity: Vector3, onLand: ((Vector3
 				return
 			end
 
+			-- try ClientEventUtils first, fall back to getAnimalTop for spoofed animals
 			local cur = ClientEventUtils.getAnimalPosition(trackAnimal, { top = true })
 			if not cur or cur == Vector3.new(0, 0, 0) then
 				cur = getAnimalTop(trackAnimal)
@@ -197,27 +209,34 @@ local function spawnBall(spawnPos: Vector3, velocity: Vector3, onLand: ((Vector3
 		end)
 	end
 
-	-- safety cleanup after 6s — mirrors decompiled task.delay(6)
+	-- safety cleanup at 6s — mirrors decompiled task.delay(6)
 	task.delay(6, function()
 		if not landed then fadeOut() end
 	end)
 end
 
--- ─── Rain drop — mirrors dropBall() from decompiled ──────────────────────────
+-- ─── dropBall — mirrors decompiled dropBall() exactly ────────────────────────
 
 local BallHitGround = ReplicatedStorage.Sounds.Events.Soccer.BallHitGround
 
 local function dropBall(pos: Vector3)
 	spawnBall(
 		pos,
-		Vector3.new(Random2:NextNumber(-22, 22), Random2:NextNumber(-14, -4), Random2:NextNumber(-22, 22)),
+		Vector3.new(rng:NextNumber(-22, 22), rng:NextNumber(-14, -4), rng:NextNumber(-22, 22)),
 		function(landPos)
-			SoundController:PlaySound(BallHitGround, landPos, false)
+			-- mirrors playImpactSound — sound tracked in trove so it cleans on stop
+			local sound = SoundController:PlaySound(BallHitGround, landPos, false)
+			if sound then
+				eventTrove:Add(sound)
+				sound.Ended:Once(function()
+					eventTrove:Remove(sound)
+				end)
+			end
 		end
 	)
 end
 
--- ─── Burst VFX ────────────────────────────────────────────────────────────────
+-- ─── playBurst — mirrors decompiled playBurst() exactly ──────────────────────
 
 local function playBurst(animal: Instance)
 	local burstPart = EventScript:FindFirstChild("Burst")
@@ -231,7 +250,9 @@ local function playBurst(animal: Instance)
 	)
 end
 
--- ─── Strike — targeted ball drop on animal ────────────────────────────────────
+-- ─── Strike — mirrors Strike:OnClientEvent from decompiled ───────────────────
+-- original: getAnimalPosition → spawnBall 45 above → onLand: playBurst + FireServer
+-- local version: getAnimalTop fallback, addSoccerTrait instead of FireServer
 
 local function strikeAnimal(animal: Instance)
 	if not animal or not animal.Parent or not animal.PrimaryPart then return end
@@ -243,7 +264,6 @@ local function strikeAnimal(animal: Instance)
 
 	print("[Soccer] Striking:", animal.Name)
 
-	-- spawn ball 45 studs above animal, home toward it — mirrors Strike:OnClientEvent
 	spawnBall(
 		animalPos + Vector3.new(0, 45, 0),
 		Vector3.new(0, -10, 0),
@@ -257,21 +277,28 @@ local function strikeAnimal(animal: Instance)
 	)
 end
 
--- ─── Rain loop ────────────────────────────────────────────────────────────────
+-- ─── Rain loop — mirrors Timer.Simple(0.2) + u18/u19/u20 from decompiled ─────
 
-local function startRainLoop(centerPos: Vector3, rainSize: Vector3, endTime: number)
-	eventTrove:Add(Timer.Simple(0.2, function()
-		if workspace:GetServerTimeNow() > endTime then return end
-		if not isActive then return end
+local function startRain(center: Vector3, size: Vector3, duration: number)
+	rainCenter   = center
+	rainSize     = size
+	-- mirrors: u18 = os.clock() + math.max(0, endTime - serverNow)
+	rainEndClock = os.clock() + duration
 
-		for _ = 1, 2 do
-			local x = (math.random() - 0.5) * rainSize.X
-			local y = (math.random() - 0.5) * rainSize.Y
-			local z = (math.random() - 0.5) * rainSize.Z
-			dropBall(centerPos + Vector3.new(x, y, z))
-		end
-	end))
+	print("[Soccer] Rain started — center:", center, "duration:", duration)
 end
+
+eventTrove:Add(Timer.Simple(0.2, function()
+	-- mirrors decompiled: if u18 <= os.clock() or u20 == Vector3.zero then return end
+	if rainEndClock <= os.clock() or rainSize == Vector3.zero then return end
+
+	for _ = 1, 2 do
+		local x = (math.random() - 0.5) * rainSize.X
+		local y = (math.random() - 0.5) * rainSize.Y
+		local z = (math.random() - 0.5) * rainSize.Z
+		dropBall(rainCenter + Vector3.new(x, y, z))
+	end
+end))
 
 -- ─── Attack loop ──────────────────────────────────────────────────────────────
 
@@ -293,37 +320,44 @@ local function startAttackLoop()
 	end))
 end
 
--- ─── Main ─────────────────────────────────────────────────────────────────────
+-- ─── Rain refresh loop — mirrors server refresh every 25s ────────────────────
 
-local function main()
-	-- wait for Soccer event folder in workspace
-	local folder = workspace.Events:FindFirstChild("Soccer")
-	while not folder do
-		task.wait(0.1)
-		folder = workspace.Events:FindFirstChild("Soccer")
-	end
-
-	print("[Soccer] Ready")
-
-	-- derive rain center from scoreboard if present, else fallback
-	local scoreboard = workspace:FindFirstChild("SoccerScoreBoard")
-	local centerPos  = scoreboard and scoreboard:GetPivot().Position or Vector3.new(0, 50, 0)
-	local rainSize   = Vector3.new(40, 10, 40)
-	local duration   = 300
-	local endTime    = workspace:GetServerTimeNow() + duration
-
-	startRainLoop(centerPos, rainSize, endTime)
-	startAttackLoop()
-
-	-- refresh rain every 25s — mirrors server refresh loop
+local function startRainRefresh(center: Vector3, size: Vector3)
 	eventTrove:Add(task.spawn(function()
 		while isActive do
 			task.wait(25)
 			if not isActive then break end
-			endTime = workspace:GetServerTimeNow() + 30
+			-- mirrors: miniEventRemote:FireAllClients(serverNow + 30, center, size)
+			startRain(center, size, 30)
 			print("[Soccer] Rain refreshed")
 		end
 	end))
+end
+
+-- ─── Main ─────────────────────────────────────────────────────────────────────
+
+local function main()
+	-- wait for Soccer event assets — EventScript needs SoccerBall and Burst children
+	while not EventScript:FindFirstChild("SoccerBall") do
+		task.wait(0.1)
+	end
+
+	print("[Soccer] Ready")
+
+	-- derive rain center from scoreboard, mirrors server Soccer.OnStart
+	local scoreboard = workspace:FindFirstChild("SoccerScoreBoard")
+	local centerPos  = scoreboard and scoreboard:GetPivot().Position or Vector3.new(0, 50, 0)
+	local size       = Vector3.new(40, 10, 40)
+	local duration   = 300
+
+	-- mirrors task.delay(2) before first miniEventRemote:FireAllClients
+	task.delay(2, function()
+		if not isActive then return end
+		startRain(centerPos, size, duration)
+	end)
+
+	startRainRefresh(centerPos, size)
+	startAttackLoop()
 end
 
 task.spawn(main)
