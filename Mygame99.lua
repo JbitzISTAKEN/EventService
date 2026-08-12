@@ -19,9 +19,10 @@ local EventScript   = ReplicatedStorage.Controllers.EventController.Events.Mygam
 local Mygame43Model = ReplicatedStorage:WaitForChild("Models").Events.Mygame43.mygame43
 local Sounds        = ReplicatedStorage.Sounds.Events.Mygame43
 
--- Gate: same pattern as Starfall and 4th of July
-repeat task.wait() until ReplicatedStorage:GetAttribute("Mygame43")
+-- Gate: wait for server to clone and tag the model, same pattern as 4th of July waiting on Fireworks
+repeat task.wait() until CollectionService:GetTagged("Mygame43")[1]
 
+local v22       = CollectionService:GetTagged("Mygame43")[1]
 local startedAt = workspace:GetServerTimeNow()
 
 local function timeLeftFor(t)
@@ -39,11 +40,7 @@ shakeBase.RotationInfluence = Vector3.new(2.5, 0.5, 0.5)
 local trove       = Trove.new()
 local recentlyHit = {}
 
--- ─── Model ────────────────────────────────────────────────────────────────────
-
-local v22 = Mygame43Model:Clone()
-v22.Parent = workspace
-trove:Add(v22)
+-- ─── Sounds ───────────────────────────────────────────────────────────────────
 
 Sounds.Appear:Play()
 
@@ -272,13 +269,13 @@ local function loop()
 	local gate = timeLeftFor(7.7)
 	if gate > 0 then task.wait(gate) end
 
-	while ReplicatedStorage:GetAttribute("Mygame43") do
+	while CollectionService:GetTagged("Mygame43")[1] do
 		task.wait(Random.new():NextNumber(2, 4))
-		if not ReplicatedStorage:GetAttribute("Mygame43") then break end
+		if not CollectionService:GetTagged("Mygame43")[1] then break end
 
 		local numBalls = math.random(1, 2)
 		for i = 1, numBalls do
-			if not ReplicatedStorage:GetAttribute("Mygame43") then break end
+			if not CollectionService:GetTagged("Mygame43")[1] then break end
 
 			local targetPos, flightDuration, didHit = pickTarget()
 			if targetPos then
