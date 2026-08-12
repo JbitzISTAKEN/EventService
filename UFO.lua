@@ -18,11 +18,7 @@ local ClientEventUtils = require(ReplicatedStorage.Controllers.EventController.C
 
 local EVENT_NAME = "UFO"
 
--- ─── Gate ─────────────────────────────────────────────────────────────────────
-
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
-
--- ─── State ────────────────────────────────────────────────────────────────────
 
 local eventTrove        = Trove.new()
 local recentlyTargeted: {[string]: number} = {}
@@ -72,20 +68,19 @@ local function createUFOMarker(spawnPosition: Vector3): Part
 	return marker
 end
 
--- replaces Spawned:FireAllClients — green flash + camera shake locally
 local function playUFOSpawnFX()
 	local PlayerGui = Players.LocalPlayer:FindFirstChildOfClass("PlayerGui")
 	if not PlayerGui then return end
 
 	local gui = Instance.new("ScreenGui")
-	gui.IgnoreGuiInset  = true
-	gui.ResetOnSpawn    = false
-	gui.DisplayOrder    = 10000
-	gui.Name            = "UFO_SpawnFlash"
+	gui.IgnoreGuiInset   = true
+	gui.ResetOnSpawn     = false
+	gui.DisplayOrder     = 10000
+	gui.Name             = "UFO_SpawnFlash"
 
 	local frame = Instance.new("Frame")
-	frame.Size                  = UDim2.fromScale(1, 1)
-	frame.BackgroundColor3      = Color3.fromRGB(60, 255, 120)
+	frame.Size                   = UDim2.fromScale(1, 1)
+	frame.BackgroundColor3       = Color3.fromRGB(60, 255, 120)
 	frame.BackgroundTransparency = 1
 	frame.Parent = gui
 	gui.Parent   = PlayerGui
@@ -112,7 +107,6 @@ local function playUFOSpawnFX()
 	end)
 end
 
--- replaces AbductionBurst:FireAllClients — plays burst VFX locally at position
 local function playAbductionBurst(position: Vector3)
 	ClientEventUtils.playBurst(
 		ReplicatedStorage.Controllers.EventController.Events.UFO.Effects.ufoemit,
@@ -141,6 +135,47 @@ local function liftAndReturnAnimal(selected: Instance, marker: Part)
 	local entry = { animal = selected, originalCFrame = originalCFrame }
 	table.insert(activeAbductions, entry)
 
+	local function removeEntry()
+		for i, e in ipairs(activeAbductions) do
+			if e == entry then
+				table.remove(activeAbductions, i)
+				break
+			end
+		end
+	end
+
+	local function cleanup(returnAnimal: boolean)
+		marker:SetAttribute("BeamState", "off")
+		if selected and selected.Parent then
+			if returnAnimal and selected.PrimaryPart then
+				local lowerTween = TweenService:Create(
+					selected.PrimaryPart,
+					TweenInfo.new(1, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
+					{ CFrame = originalCFrame }
+				)
+				lowerTween:Play()
+				lowerTween.Completed:Wait()
+			end
+			selected:SetAttribute("ForceIdle", false)
+		end
+		removeEntry()
+	end
+
+	-- watch for animal dying mid-abduction
+	local died = false
+	local ancestryConn = selected.AncestryChanged:Connect(function()
+		if not selected.Parent then
+			died = true
+		end
+	end)
+
+	-- lift
+	if not selected.PrimaryPart then
+		ancestryConn:Disconnect()
+		cleanup(false)
+		return
+	end
+
 	local liftTween = TweenService:Create(
 		selected.PrimaryPart,
 		TweenInfo.new(2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
@@ -149,34 +184,33 @@ local function liftAndReturnAnimal(selected: Instance, marker: Part)
 	liftTween:Play()
 	liftTween.Completed:Wait()
 
+	if died or not selected.Parent or not selected.PrimaryPart then
+		ancestryConn:Disconnect()
+		cleanup(false)
+		return
+	end
+
 	task.wait(0.5)
 
-	-- replaces AbductionBurst:FireAllClients
-	if selected.PrimaryPart then
-		playAbductionBurst(selected.PrimaryPart.Position)
+	if died or not selected.Parent or not selected.PrimaryPart then
+		ancestryConn:Disconnect()
+		cleanup(false)
+		return
 	end
 
+	playAbductionBurst(selected.PrimaryPart.Position)
 	applyTrait(selected, "UFO")
+
 	task.wait(1.5)
 
-	local lowerTween = TweenService:Create(
-		selected.PrimaryPart,
-		TweenInfo.new(1, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
-		{ CFrame = originalCFrame }
-	)
-	lowerTween:Play()
-	lowerTween.Completed:Wait()
-
-	marker:SetAttribute("BeamState", "off")
-	task.wait(1)
-	selected:SetAttribute("ForceIdle", false)
-
-	for i, e in ipairs(activeAbductions) do
-		if e == entry then
-			table.remove(activeAbductions, i)
-			break
-		end
+	if died or not selected.Parent or not selected.PrimaryPart then
+		ancestryConn:Disconnect()
+		cleanup(false)
+		return
 	end
+
+	ancestryConn:Disconnect()
+	cleanup(true)
 end
 
 local function handleUFODeparture(marker: Part)
@@ -213,7 +247,7 @@ local function findCandidates(): {Instance}
 	return candidates
 end
 
--- ─── Visual observer — mirrors createUFOVisuals from decompiled client ────────
+-- ─── Visual observer ──────────────────────────────────────────────────────────
 
 local function startVisuals()
 	eventTrove:Add(Observers.observeTag("GalaxyUFO", function(marker)
@@ -251,7 +285,7 @@ local function startVisuals()
 			end
 		end
 
-		local restPosition = att1.Position
+		local restPosition  = att1.Position
 		local activeTween: Tween? = nil
 
 		local function cancelBeamTween()
@@ -276,16 +310,13 @@ local function startVisuals()
 				activeTween:Play()
 
 				local captured = activeTween
-				if captured then
-					captured.Completed:Wait()
-				end
+				if captured then captured.Completed:Wait() end
 
 				for _, b in beams do b.Enabled = false end
 				att1.Position = restPosition
 			end
 		end
 
-		-- init beam state
 		vizTrove:Add(task.spawn(function()
 			local state = marker:GetAttribute("BeamState")
 			if typeof(state) == "string" then
@@ -296,13 +327,11 @@ local function startVisuals()
 			end
 		end))
 
-		-- react to BeamState changes
 		vizTrove:Add(marker:GetAttributeChangedSignal("BeamState"):Connect(function()
 			local state = marker:GetAttribute("BeamState")
 			if typeof(state) == "string" then setState(state) end
 		end))
 
-		-- follow marker every PostSimulation
 		vizTrove:Add(RunService.PostSimulation:Connect(function()
 			if ufo.PrimaryPart == nil or not marker.Parent then
 				vizTrove:Destroy()
@@ -338,14 +367,11 @@ local function startStrikeLoop()
 
 			local marker = createUFOMarker(spawnPos)
 
-			-- replaces Spawned:FireAllClients
 			playUFOSpawnFX()
-
 			recentlyTargeted[selected.Name] = workspace:GetServerTimeNow()
 
 			moveUFOToPosition(marker, pos + Vector3.new(0, 50, 0), 1.5)
 
-			-- track animal XZ while hovering
 			local trackConn = RunService.Heartbeat:Connect(function()
 				if selected and selected.PrimaryPart and marker and marker.Parent then
 					local p = selected.PrimaryPart.Position
@@ -381,7 +407,6 @@ local function main()
 		strikeTask = nil
 	end
 
-	-- return any abducted animals
 	for _, entry in ipairs(activeAbductions) do
 		local animal = entry.animal
 		if animal and animal.PrimaryPart then
@@ -395,7 +420,7 @@ local function main()
 				animal:SetAttribute("ForceIdle", false)
 			end)
 		else
-			animal:SetAttribute("ForceIdle", false)
+			if animal then animal:SetAttribute("ForceIdle", false) end
 		end
 	end
 
