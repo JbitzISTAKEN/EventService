@@ -18,6 +18,7 @@ local SoundController  = require(ReplicatedStorage.Controllers.SoundController)
 local EVENT_NAME  = "Summer Hour"
 local EventScript = ReplicatedStorage.Controllers.EventController.Events[EVENT_NAME]
 
+-- Block until the event is actually active — mirrors Spyderini's repeat/until gate
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
 
 -- ─── State ────────────────────────────────────────────────────────────────────
@@ -143,6 +144,7 @@ local function fireProjectile(animal: Instance): number
 		animal.Name, (animalPos - startPos).Magnitude, travelTime))
 
 	conn = RunService.PostSimulation:Connect(function()
+		-- guard: if event ended mid-flight, clean up immediately
 		if not isActive then
 			conn:Disconnect()
 			if clone.Parent then clone:Destroy() end
@@ -330,6 +332,7 @@ local function main()
 	startSunAnimation()
 	startAttackLoop()
 
+
 	while EventController:GetActiveEventData(EVENT_NAME) do
 		task.wait(1)
 	end
@@ -338,11 +341,6 @@ local function main()
 
 	isActive  = false
 	isRunning = false
-
-	if sunModel and sunModel.Parent then
-		sunModel:Destroy()
-		sunModel = nil
-	end
 
 	eventTrove:Destroy()
 	table.clear(recentlyTargeted)
