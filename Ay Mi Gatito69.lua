@@ -8,7 +8,7 @@ local NpcPathfinding = loadstring(game:HttpGet("https://raw.githubusercontent.co
 local EventController = require(ReplicatedStorage.Controllers.EventController)
 local Trove           = require(ReplicatedStorage.Packages.Trove)
 
-local EventScript    = ReplicatedStorage.Controllers.EventController.Events["Ay Mi Gatito"]
+local GatitosFolder  = ReplicatedStorage.Controllers.EventController.Events["Ay Mi Gatito"].Gatitos
 
 local TAG_NAME       = "Gatito"
 local BLOCKING_TRAIT = ":3"
@@ -62,57 +62,50 @@ end
 -- ─── Gatito spawn ──────────────────────────────────────────────────────────────
 
 local function spawnGatito(position, homePart)
-	local model = Instance.new("Model")
+	local variant    = VARIANTS[variantIndex]
+	local visualName = variant or "Gatito"
+	variantIndex     = (variantIndex % totalOptions) + 1
+
+	-- clone the visual directly into workspace
+	local visualTemplate = GatitosFolder:FindFirstChild(visualName) or GatitosFolder:FindFirstChild("Gatito")
+	if not visualTemplate then
+		warn("[AyMiGatito] Could not find visual:", visualName)
+		return
+	end
+
+	local model = visualTemplate:Clone()
 	model.Name  = "Gatito"
 
-	local root = Instance.new("Part")
-	root.Name         = "HumanoidRootPart"
-	root.Size         = Vector3.new(2, 2, 2)
-	root.Transparency = 1
-	root.Anchored     = true
-	root.CanCollide   = false
-	root.CFrame       = CFrame.new(position)
-	root.Parent       = model
-	model.PrimaryPart = root
+	-- fix all parts
+	for _, desc in ipairs(model:GetDescendants()) do
+		if desc:IsA("BasePart") then
+			desc.Anchored    = false
+			desc.CanCollide  = false
+			desc.CanQuery    = false
+			desc.CanTouch    = false
+			desc.Massless    = true
+		elseif desc:IsA("Humanoid") then
+			desc.EvaluateStateMachine  = false
+			desc.DisplayDistanceType   = Enum.HumanoidDisplayDistanceType.None
+			desc.PlatformStand         = true
+		end
+	end
 
-	local variant     = VARIANTS[variantIndex]
-	local visualName  = variant or "Gatito"
-	variantIndex      = (variantIndex % totalOptions) + 1
+	-- make sure there's a PrimaryPart to move with
+	local root = model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
+	if not root then
+		warn("[AyMiGatito] No root part found on visual:", visualName)
+		model:Destroy()
+		return
+	end
+
+	root.Anchored = true
+	model.PrimaryPart = root
+	model:PivotTo(CFrame.new(position))
 
 	if variant then
 		model:SetAttribute("Variant", variant)
 	end
-
-	-- clone visual from Gatitos folder
-	local GatitosFolder   = EventScript:FindFirstChild("Gatitos")
-	local visualTemplate  = GatitosFolder and (GatitosFolder:FindFirstChild(visualName) or GatitosFolder:FindFirstChild("Gatito"))
-	if visualTemplate then
-		local visual = visualTemplate:Clone()
-
-		for _, desc in ipairs(visual:GetDescendants()) do
-			if desc:IsA("BasePart") then
-				desc.Anchored    = false
-				desc.CanCollide  = false
-				desc.CanQuery    = false
-				desc.CanTouch    = false
-				desc.Massless    = true
-			elseif desc:IsA("Humanoid") then
-				desc.EvaluateStateMachine  = false
-				desc.DisplayDistanceType   = Enum.HumanoidDisplayDistanceType.None
-				desc.PlatformStand         = true
-			end
-		end
-
-		local weldTarget = visual:IsA("Model") and (visual.PrimaryPart or visual:FindFirstChildWhichIsA("BasePart")) or visual
-		local weld       = Instance.new("Weld")
-		weld.Part0       = root
-		weld.Part1       = weldTarget
-		weld.C0          = CFrame.identity
-		weld.C1          = CFrame.identity
-		weld.Parent      = weldTarget
-		visual.Parent    = model
-	end
-
 	model:SetAttribute("Dance",     true)
 	model:SetAttribute("IsRunning", false)
 	model:SetAttribute("IsChasing", false)
@@ -219,7 +212,7 @@ local function followAndAttack(gatitoData, targetAnimal)
 		if reached and targetAnimal and targetAnimal.Parent then
 			gatito:SetAttribute("AttackAnimation", true)
 
-			local elapsed    = 0
+			local elapsed = 0
 			local attackConn
 			attackConn = RunService.Heartbeat:Connect(function(dt)
 				elapsed += dt
