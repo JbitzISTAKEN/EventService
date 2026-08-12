@@ -334,7 +334,7 @@ local function main()
 		task.wait(1)
 	end
 
-	print("[SummerHour] Event ended — cleaning up")
+	print("[SummerHour] Event ended — cleaning pussy up")
 
 isActive  = false
 	isRunning = false
