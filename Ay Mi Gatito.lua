@@ -11,26 +11,30 @@ local NpcPathfinding  = loadstring(game:HttpGet(
 
 local EVENT_NAME     = "Ay Mi Gatito"
 local TAG_NAME       = "Gatito"
-local VARIANTS       = { "Angry Gatito", "Crying Gatito" }
 local BLOCKING_TRAIT = ":3"
 
-local WANDER_FOLDER      = workspace:WaitForChild("Events"):WaitForChild("Ay Mi Gatito")
-local GATITO_MODEL       = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Ay Mi Gatito"):WaitForChild("Gatito")
+local GATITO_FOLDER = ReplicatedStorage.Controllers.EventController.Events["Ay Mi Gatito"].Gatitos
+local GATITO_MODELS = {
+    GATITO_FOLDER:WaitForChild("Gatito"),
+    GATITO_FOLDER:WaitForChild("Angry Gatito"),
+    GATITO_FOLDER:WaitForChild("Crying Gatito"),
+}
 
-local WANDER_SPEED        = 16
-local CHASE_SPEED         = 20
-local CHASE_REACH_DIST    = 5
-local CHASE_STICK_DIST    = 0.5
-local ATTACK_DURATION     = 0.5
-local POST_ATTACK_WAIT    = 1.5
-local WANDER_LOOP_RATE    = 2
-local ATTACK_LOOP_MIN     = 5
-local ATTACK_LOOP_MAX     = 10
-local GATITOS_PER_WANDER  = 3
+local WANDER_FOLDER     = ReplicatedStorage.Controllers.EventController.Events["Ay Mi Gatito"]
+local GATITOS_PER_WANDER = 3
+local WANDER_SPEED       = 16
+local CHASE_SPEED        = 20
+local CHASE_REACH_DIST   = 5
+local CHASE_STICK_DIST   = 0.5
+local ATTACK_DURATION    = 0.5
+local POST_ATTACK_WAIT   = 1.5
+local WANDER_LOOP_RATE   = 2
+local ATTACK_LOOP_MIN    = 5
+local ATTACK_LOOP_MAX    = 10
 
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
 
-local eventTrove     = Trove.new()
+local eventTrove      = Trove.new()
 local spawnedEntities = {}
 local lockedTargets   = {}
 local isActive        = true
@@ -61,10 +65,12 @@ end
 -- ─── Model ────────────────────────────────────────────────────────────────────
 
 local function createGatito(position)
-    local model = GATITO_MODEL:Clone()
+    local template = GATITO_MODELS[variantIndex]
+    variantIndex   = variantIndex % #GATITO_MODELS + 1
+
+    local model = template:Clone()
     model.Name  = "Gatito"
 
-    -- root part is already inside the cloned model; just reposition it
     local root = model:FindFirstChild("HumanoidRootPart")
         or model.PrimaryPart
         or model:FindFirstChildWhichIsA("BasePart")
@@ -74,15 +80,11 @@ local function createGatito(position)
     root.CFrame     = CFrame.new(stickToGround(position))
     model.PrimaryPart = root
 
-    local variant = VARIANTS[variantIndex]
-    if variant then model:SetAttribute("Variant", variant) end
     model:SetAttribute("Dance",     true)
     model:SetAttribute("IsRunning", false)
     model:SetAttribute("IsChasing", false)
 
     CollectionService:AddTag(model, TAG_NAME)
-
-    variantIndex = variantIndex % #VARIANTS + 1
 
     model.Parent = workspace
     return model
@@ -98,14 +100,12 @@ local function wander(hunterData)
     if entity:GetAttribute("IsChasing") or entity:GetAttribute("IsRunning") then return end
 
     local size = homePart.Size
-    local randomOffset = Vector3.new(
+    local targetPos = stickToGround(homePart.Position + Vector3.new(
         rng:NextNumber(-size.X / 2, size.X / 2),
         0,
         rng:NextNumber(-size.Z / 2, size.Z / 2)
-    )
-
-    local targetPos = stickToGround(homePart.Position + randomOffset)
-    local distance  = (targetPos - entity:GetPivot().Position).Magnitude
+    ))
+    local distance = (targetPos - entity:GetPivot().Position).Magnitude
     if distance < 1 then return end
 
     entity:SetAttribute("IsRunning", true)
@@ -169,7 +169,7 @@ local function followAndAttackAnimal(gatitoData, targetAnimal)
         if reachedTarget and targetAnimal and targetAnimal.Parent then
             gatito:SetAttribute("AttackAnimation", true)
 
-            local elapsed    = 0
+            local elapsed = 0
             local attackConn
             attackConn = chaseTrove:Add(RunService.Heartbeat:Connect(function(dt)
                 elapsed += dt
@@ -193,8 +193,7 @@ local function followAndAttackAnimal(gatitoData, targetAnimal)
                     local flatDir = Vector3.new(dir.X, 0, dir.Z)
                     if flatDir.Magnitude < 1e-4 then return end
                     flatDir = flatDir.Unit
-                    local move   = math.min(CHASE_SPEED * dt, dist)
-                    local newPos = stickToGround(mPos + dir * move)
+                    local newPos = stickToGround(mPos + dir * math.min(CHASE_SPEED * dt, dist))
                     gatito:PivotTo(CFrame.new(newPos, newPos + flatDir))
                 end
             end))
@@ -233,21 +232,20 @@ local function spawnGatito(homePart)
     if not isActive or not homePart then return end
 
     local size = homePart.Size
-    local offset = Vector3.new(
+    local pos  = homePart.Position + Vector3.new(
         rng:NextNumber(-size.X / 2, size.X / 2),
         0,
         rng:NextNumber(-size.Z / 2, size.Z / 2)
     )
 
-    local model      = createGatito(homePart.Position + offset)
+    local model       = createGatito(pos)
     local gatitoTrove = eventTrove:Extend()
     gatitoTrove:Add(model)
 
     local data = {
-        Model     = model,
-        Home      = homePart,
-        IsBusy    = false,
-        Trove     = gatitoTrove,
+        Model = model,
+        Home  = homePart,
+        Trove = gatitoTrove,
     }
 
     table.insert(spawnedEntities, data)
@@ -257,12 +255,10 @@ end
 -- ─── Main ─────────────────────────────────────────────────────────────────────
 
 local function main()
-    if WANDER_FOLDER then
-        for _, part in ipairs(WANDER_FOLDER:GetChildren()) do
-            if part.Name == "Wander" then
-                for _ = 1, GATITOS_PER_WANDER do
-                    spawnGatito(part)
-                end
+    for _, part in ipairs(WANDER_FOLDER:GetChildren()) do
+        if part.Name == "Wander" and part:IsA("BasePart") then
+            for _ = 1, GATITOS_PER_WANDER do
+                spawnGatito(part)
             end
         end
     end
@@ -297,7 +293,10 @@ local function main()
     end))
     eventTrove:Add(CollectionService:GetInstanceRemovedSignal("Animal"):Connect(function(inst)
         for i = #cachedAnimals, 1, -1 do
-            if cachedAnimals[i] == inst then table.remove(cachedAnimals, i) break end
+            if cachedAnimals[i] == inst then
+                table.remove(cachedAnimals, i)
+                break
+            end
         end
     end))
 
@@ -314,8 +313,8 @@ local function main()
             end
 
             if #candidates > 0 then
-                local selected    = candidates[rng:NextInteger(1, #candidates)]
-                local gatitoData  = spawnedEntities[rng:NextInteger(1, #spawnedEntities)]
+                local selected   = candidates[rng:NextInteger(1, #candidates)]
+                local gatitoData = spawnedEntities[rng:NextInteger(1, #spawnedEntities)]
                 if gatitoData.Model and gatitoData.Model.Parent then
                     followAndAttackAnimal(gatitoData, selected)
                 end
