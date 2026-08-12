@@ -1,4 +1,4 @@
--- LocalScript: SummerHourLogic — Scale Method
+-- LocalScript: SummerHourLogic — Server/Controller Method
 -- StarterPlayerScripts
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -339,12 +339,7 @@ local function main()
 	isActive  = false
 	isRunning = false
 
-	-- Scale to 0 — model stays intact for next execution, just hidden
-	if sunModel and sunModel.Parent then
-		sunModel:ScaleTo(0)
-		sunModel = nil
-	end
-
+	-- Server/controller method: don't touch the model, client cleans only what it owns
 	eventTrove:Destroy()
 	table.clear(recentlyTargeted)
 
