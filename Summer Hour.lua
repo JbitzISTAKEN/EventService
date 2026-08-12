@@ -327,7 +327,7 @@ local function main()
 	startAttackLoop()
 
 	while EventController:GetActiveEventData(EVENT_NAME) do
-		task.wait(1)
+		task.wait()
 	end
 
 	print("[SummerHour] Event ended — cleaning up")
