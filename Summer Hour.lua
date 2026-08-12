@@ -332,12 +332,6 @@ local function main()
 	startSunAnimation()
 	startAttackLoop()
 
-	-- ─── Shutdown — mirrors Spyderini exactly ─────────────────────────────────
-	-- Poll until EventController reports the event is no longer active,
-	-- then tear everything down in one shot via eventTrove:Destroy().
-	-- isRunning kills the sun animation wander loop.
-	-- isActive kills the attack loop and all in-flight task.delay guards.
-	-- ReplicatedStorage attribute cleared so downstream listeners see the exit.
 
 	while EventController:GetActiveEventData(EVENT_NAME) do
 		task.wait(1)
