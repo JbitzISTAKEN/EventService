@@ -6,103 +6,53 @@ local VFX              = require(ReplicatedStorage.Shared.VFX)
 local SoundController  = require(ReplicatedStorage.Controllers.SoundController)
 local MathUtils        = require(ReplicatedStorage.Utils.MathUtils)
 local SharedEventUtils = require(ReplicatedStorage.Shared.SharedEventUtils)
-local ShakePresets     = require(ReplicatedStorage.Shared.ShakePresets)
 
 local EventAssets = ReplicatedStorage.Controllers.EventController.Events["4th of July"]
 local Sounds      = ReplicatedStorage.Sounds.Events["4th of July"]
 
--- wait for event attribute just like Easter
 repeat task.wait() until ReplicatedStorage:GetAttribute("4thOfJulyEvent")
 
 local RayParams = RaycastParams.new()
 RayParams.FilterType = Enum.RaycastFilterType.Include
-RayParams.FilterDescendantsInstances = {
-    workspace:WaitForChild("Map"),
-    workspace:WaitForChild("Plots"),
-}
+RayParams.FilterDescendantsInstances = { workspace:WaitForChild("Map"), workspace:WaitForChild("Plots") }
 
--- ── launcher setup — mirrors OnStart exactly ───────────────────────────────
--- original clones the Fireworks folder into workspace then tweens each
--- launcher UP from below ground before any firework fires
-local fireworksFolder = ReplicatedStorage.Models.Events["4th of July"].Fireworks:Clone()
-fireworksFolder.Parent = workspace
+local model  = workspace:WaitForChild("Fireworks", 30) or error("[4thJuly] Fireworks never appeared")
+local source = ReplicatedStorage.Models.Events["4th of July"].Fireworks
 
-local launchers = fireworksFolder:GetChildren()
-table.sort(launchers, function(a, b) return tonumber(a.Name) < tonumber(b.Name) end)
+local targets, launchers, originalCFrames = {}, {}, {}
 
--- store original CFrames (at-ground positions)
-local originalCFrames = {}
-for _, launcher in launchers do
-    originalCFrames[launcher] = launcher.CFrame
+for _, p in source:GetChildren() do
+    if p:IsA("BasePart") then targets[p.Name] = p.Position end
 end
 
--- camera shake on start (4 second sustain matching original)
-local shake = ShakePresets.BumpS:Clone()
-shake.Sustain = true
-ShakePresets.BindShakeToCamera(shake, workspace.CurrentCamera)
-shake:Start()
-task.delay(4, function() shake:StopSustain() end)
-
--- rise launchers from underground — original drops them below then tweens up
-local rng = Random.new()
-local riseDone = false
-local riseCount = 0
-
-for _, launcher in launchers do
-    -- start below ground
-    launcher.CFrame = originalCFrames[launcher] - Vector3.new(0, launcher.Size.Y * 1.1, 0)
-
-    local riseDuration = rng:NextNumber(3, 7)
-    local tween = TweenService:Create(
-        launcher,
-        TweenInfo.new(riseDuration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-        { CFrame = originalCFrames[launcher] }
-    )
-    tween:Play()
-    tween.Completed:Once(function()
-        riseCount += 1
-        if riseCount >= #launchers then
-            riseDone = true
-        end
-    end)
+for _, p in model:GetChildren() do
+    if p:IsA("BasePart") and targets[p.Name] then
+        table.insert(launchers, p)
+        originalCFrames[p] = CFrame.new(targets[p.Name])
+    end
 end
 
--- wait for all launchers to finish rising before any firework fires
-repeat task.wait() until riseDone
-print("[4thJuly] launchers risen — starting salvos")
+if #launchers == 0 then return end
 
--- ── firework logic ─────────────────────────────────────────────────────────
 local function fireOne(launcher)
     local launchCF = originalCFrames[launcher]
     local height   = math.random(80, 120)
     local peakCF   = launchCF + Vector3.new(0, height, 0)
     local travel   = height / 20
 
-    -- startup flash — original offsets by launcher size
     local startup = EventAssets.FireworkStartup:Clone()
     startup.CFrame = launchCF + Vector3.new(0, launcher.Size.Y * 0.5 - startup.Size.Y * 0.5, 0)
     startup.Parent = workspace
     VFX.emit(startup)
-
-    local shotSfx = Sounds.Shot:Clone()
-    shotSfx.Parent = startup
-    SoundController:PlaySound(shotSfx)
+    SoundController:PlaySound(Sounds.Shot:Clone(), startup)
     task.delay(2, function() startup:Destroy() end)
 
-    -- projectile
     local proj = EventAssets.Firework:Clone()
-    proj.CFrame = launchCF
-    proj.Parent = workspace
+    proj.CFrame  = launchCF
+    proj.Parent  = workspace
+    SoundController:PlaySound(Sounds["Trail Sound Ball"]:Clone(), proj)
 
-    local trailSfx = Sounds["Trail Sound Ball"]:Clone()
-    trailSfx.Parent = proj
-    SoundController:PlaySound(trailSfx)
-
-    local rise = TweenService:Create(
-        proj,
-        TweenInfo.new(travel, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-        { CFrame = peakCF }
-    )
+    local rise = TweenService:Create(proj, TweenInfo.new(travel, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { CFrame = peakCF })
     rise:Play()
 
     task.delay(travel * 0.8, function()
@@ -117,17 +67,14 @@ local function fireOne(launcher)
         VFX.emit(fx)
         task.delay(4, function() fx:Destroy() end)
 
-        -- falloff trails — original uses launcher bottom as v11
         local groundCF = launchCF - Vector3.new(0, launcher.Size.Y, 0)
 
         for _ = 1, math.random(6, 9) do
             local angle  = math.random() * math.pi * 2
             local r      = math.random() * 70
             local ox, oz = math.cos(angle) * r, math.sin(angle) * r
-
-            local rayOrigin = peakCF + Vector3.new(ox, 0, oz)
-            local hit       = workspace:Raycast(rayOrigin.Position, Vector3.new(0, -200, 0), RayParams)
-            local destCF    = hit and CFrame.new(hit.Position) or (groundCF + Vector3.new(ox, 0, oz))
+            local hit    = workspace:Raycast((peakCF + Vector3.new(ox, 0, oz)).Position, Vector3.new(0, -200, 0), RayParams)
+            local destCF = hit and CFrame.new(hit.Position) or groundCF + Vector3.new(ox, 0, oz)
 
             local trail   = EventAssets.Falloff:Clone()
             trail.CFrame  = peakCF
@@ -140,8 +87,7 @@ local function fireOne(launcher)
                 local t = elapsed / 2.3
                 SharedEventUtils.pushPartCFrame(trail, CFrame.new(MathUtils.quadBezier(t,
                     peakCF.Position,
-                    peakCF.Position + Vector3.new(0, height, 0)
-                        + (destCF.Position - peakCF.Position) * Vector3.new(1, 0, 1) * 0.7,
+                    peakCF.Position + Vector3.new(0, height, 0) + (destCF.Position - peakCF.Position) * Vector3.new(1, 0, 1) * 0.7,
                     destCF.Position
                 )))
                 if t >= 1 then
@@ -150,7 +96,7 @@ local function fireOne(launcher)
                     impact.Parent = workspace
                     VFX.emit(impact)
                     VFX.disable(trail)
-                    task.delay(3, function() trail:Destroy(); impact:Destroy() end)
+                    task.delay(3, function() trail:Destroy() impact:Destroy() end)
                     conn:Disconnect()
                 end
                 debug.profileend()
@@ -159,30 +105,38 @@ local function fireOne(launcher)
     end)
 end
 
--- ── salvo loop — only runs after launchers are up ─────────────────────────
-task.spawn(function()
-    while ReplicatedStorage:GetAttribute("4thOfJulyEvent") do
-        local validIndices = {}
-        for i in ipairs(launchers) do table.insert(validIndices, i) end
+-- watch for rise completion then start salvo
+local risen = 0
+local function onRise()
+    risen += 1
+    if risen < #launchers then return end
+    print("[4thJuly] All launchers have risen!")
 
-        for _ = 1, math.random(1, 3) do
-            fireOne(launchers[validIndices[math.random(1, #validIndices)]])
+    task.spawn(function()
+        while ReplicatedStorage:GetAttribute("4thOfJulyEvent") do
+            for _ = 1, math.random(1, 3) do
+                fireOne(launchers[math.random(1, #launchers)])
+            end
+            task.wait(math.random(20, 40) / 10)
         end
 
-        task.wait(math.random(20, 40) / 10)
-    end
+        model.Destroying:Once(function()
+            print("[4thJuly] All launchers have fallen!")
+        end)
+    end)
+end
 
-    -- on event end — sink launchers back underground then destroy
-    for _, launcher in launchers do
-        local tf = TweenInfo.new(
-            1 + math.random() + math.random(),
-            Enum.EasingStyle.Quad,
-            Enum.EasingDirection.In
-        )
-        TweenService:Create(launcher, tf, {
-            CFrame = originalCFrames[launcher] - Vector3.new(0, launcher.Size.Y * 1.1, 0)
-        }):Play()
+for _, p in launchers do
+    local targetPos = targets[p.Name]
+    if (p.Position - targetPos).Magnitude <= 0.2 then
+        onRise()
+    else
+        local conn
+        conn = p:GetPropertyChangedSignal("Position"):Connect(function()
+            if (p.Position - targetPos).Magnitude <= 0.2 then
+                conn:Disconnect()
+                onRise()
+            end
+        end)
     end
-    task.wait(3)
-    fireworksFolder:Destroy()
-end)
+end
