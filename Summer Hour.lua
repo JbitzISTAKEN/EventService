@@ -336,11 +336,11 @@ local function main()
 
 	print("[SummerHour] Event ended — cleaning up")
 
-	isActive  = false
+isActive  = false
 	isRunning = false
 
 	if sunModel and sunModel.Parent then
-		sunModel:Destroy()
+		sunModel:ScaleTo(0)
 		sunModel = nil
 	end
 
@@ -348,6 +348,4 @@ local function main()
 	table.clear(recentlyTargeted)
 
 	ReplicatedStorage:SetAttribute("SummerHourEvent", nil)
-end
-
 task.spawn(main)
