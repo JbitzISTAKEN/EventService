@@ -8,6 +8,8 @@ local NpcPathfinding = loadstring(game:HttpGet("https://raw.githubusercontent.co
 local EventController = require(ReplicatedStorage.Controllers.EventController)
 local Trove           = require(ReplicatedStorage.Packages.Trove)
 
+local EventScript    = ReplicatedStorage.Controllers.EventController.Events["Ay Mi Gatito"]
+
 local TAG_NAME       = "Gatito"
 local BLOCKING_TRAIT = ":3"
 local VARIANTS       = { "Angry Gatito", "Crying Gatito" }
@@ -53,8 +55,6 @@ local function hasBlockingTrait(animal)
 	return set[BLOCKING_TRAIT] == true
 end
 
--- ─── Helpers ───────────────────────────────────────────────────────────────────
-
 local function stickToGround(pos)
 	return NpcPathfinding.stickToGround(pos)
 end
@@ -75,11 +75,43 @@ local function spawnGatito(position, homePart)
 	root.Parent       = model
 	model.PrimaryPart = root
 
-	local variant = VARIANTS[variantIndex]
+	local variant     = VARIANTS[variantIndex]
+	local visualName  = variant or "Gatito"
+	variantIndex      = (variantIndex % totalOptions) + 1
+
 	if variant then
 		model:SetAttribute("Variant", variant)
 	end
-	variantIndex = (variantIndex % totalOptions) + 1
+
+	-- clone visual from Gatitos folder
+	local GatitosFolder   = EventScript:FindFirstChild("Gatitos")
+	local visualTemplate  = GatitosFolder and (GatitosFolder:FindFirstChild(visualName) or GatitosFolder:FindFirstChild("Gatito"))
+	if visualTemplate then
+		local visual = visualTemplate:Clone()
+
+		for _, desc in ipairs(visual:GetDescendants()) do
+			if desc:IsA("BasePart") then
+				desc.Anchored    = false
+				desc.CanCollide  = false
+				desc.CanQuery    = false
+				desc.CanTouch    = false
+				desc.Massless    = true
+			elseif desc:IsA("Humanoid") then
+				desc.EvaluateStateMachine  = false
+				desc.DisplayDistanceType   = Enum.HumanoidDisplayDistanceType.None
+				desc.PlatformStand         = true
+			end
+		end
+
+		local weldTarget = visual:IsA("Model") and (visual.PrimaryPart or visual:FindFirstChildWhichIsA("BasePart")) or visual
+		local weld       = Instance.new("Weld")
+		weld.Part0       = root
+		weld.Part1       = weldTarget
+		weld.C0          = CFrame.identity
+		weld.C1          = CFrame.identity
+		weld.Parent      = weldTarget
+		visual.Parent    = model
+	end
 
 	model:SetAttribute("Dance",     true)
 	model:SetAttribute("IsRunning", false)
@@ -217,7 +249,6 @@ local function followAndAttack(gatitoData, targetAnimal)
 
 			task.wait(ATTACK_DURATION)
 			attackConn:Disconnect()
-
 			gatito:SetAttribute("AttackAnimation", false)
 
 			if targetAnimal and targetAnimal.Parent then
