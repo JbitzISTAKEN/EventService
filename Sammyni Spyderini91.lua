@@ -37,8 +37,7 @@ local MAX_IDLE_THRESHOLD       = 3.0
 local MIN_WANDERS              = 3
 local MAX_WANDERS              = 5
 
-local EventAssets = ReplicatedStorage.Controllers.EventController.Events[EVENT_NAME]
-local Sounds      = ReplicatedStorage.Sounds.Events[EVENT_NAME]
+local Sounds = ReplicatedStorage.Sounds.Events[EVENT_NAME]
 
 local WANDER_FOLDER = workspace:WaitForChild("Events"):WaitForChild("Wander")
 
@@ -96,32 +95,6 @@ local function getRandomPositionNearTarget(target: Model): Vector3?
 	return NpcPathfinding.stickToGround(fallback, GROUND_Y_OFFSET)
 end
 
-local function createHole(position: Vector3, duration: number)
-	local rayParams = RaycastParams.new()
-	rayParams.FilterType = Enum.RaycastFilterType.Include
-	rayParams.FilterDescendantsInstances = { workspace:FindFirstChild("Map"), workspace:FindFirstChild("Plots") }
-
-	local hitPos = position
-	local result = workspace:Raycast(position, Vector3.new(0, -25, 0), rayParams)
-	if result then hitPos = result.Position end
-
-	local hole = EventAssets:FindFirstChild("Hole") and EventAssets.Hole:Clone()
-		or Instance.new("Part")
-	hole.CFrame = CFrame.new(hitPos + Vector3.new(0, 0.01, 0)) * CFrame.Angles(0, 0, math.pi / 2)
-	hole.Size   = Vector3.new(0.01, 0.01, 0.01)
-	hole.Parent = workspace
-
-	CreateTween(hole, TweenInfo.new(0.75, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
-		Size = Vector3.new(0.01, 8, 8)
-	})
-	task.delay(duration, function()
-		CreateTween(hole, TweenInfo.new(0.75, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
-			Size = Vector3.new(0.01, 0.01, 0.01)
-		}).Completed:Wait()
-		hole:Destroy()
-	end)
-end
-
 local function hasSpiderTrait(animal: Model): boolean
 	return animal:GetAttribute("HasSpiderTrait") == true
 end
@@ -164,113 +137,6 @@ local function createSpider(position: Vector3): Model
 	model:SetAttribute("AttackAnimation", false)
 
 	CollectionService:AddTag(model, TAG_NAME)
-
-	local visual = EventAssets["Sammyni Spyderini"]:Clone()
-	local weld   = Instance.new("Weld")
-	weld.Part0   = visual.PrimaryPart
-	weld.Part1   = root
-	weld.C0      = CFrame.Angles(0, math.pi, 0)
-	weld.Parent  = visual.PrimaryPart
-	visual.Parent = model
-
-	local animController = visual:FindFirstChildOfClass("AnimationController")
-	local animator = animController and animController:FindFirstChildOfClass("Animator")
-
-	local idle, walk, attack, ground, initialGround, jump
-	local flag = nil
-
-	if animator then
-		local function loadAnim(name)
-			local a = EventAssets:FindFirstChild(name)
-			return a and animator:LoadAnimation(a) or nil
-		end
-		idle          = loadAnim("Idle")
-		walk          = loadAnim("Walk")
-		attack        = loadAnim("Attack")
-		ground        = loadAnim("Ground")
-		initialGround = loadAnim("InitialGround")
-		jump          = loadAnim("Jump")
-
-		if idle then
-			idle.Priority = Enum.AnimationPriority.Idle
-			idle:Play()
-		end
-		if walk then
-			walk.Priority = Enum.AnimationPriority.Movement
-		end
-		if ground then
-			ground.Looped = true
-			ground:GetMarkerReachedSignal("Freeze"):Connect(function()
-				ground:AdjustSpeed(0)
-			end)
-		end
-		if initialGround then
-			initialGround.Looped = true
-			initialGround:GetMarkerReachedSignal("Freeze"):Connect(function()
-				initialGround:AdjustSpeed(0)
-			end)
-		end
-	end
-
-	local function updateGround()
-		if model:GetAttribute("InitialGround") then
-			flag = true
-			SoundController:PlaySound(Sounds:FindFirstChild("EnterHole"), root.Position, false)
-			createHole(root.Position, 1.5)
-			if initialGround and not initialGround.IsPlaying then
-				initialGround:Play()
-			end
-		elseif model:GetAttribute("Ground") then
-			SoundController:PlaySound(Sounds:FindFirstChild("EnterHole"), root.Position, false)
-			createHole(root.Position, 1.5)
-			if ground then
-				if ground.IsPlaying then
-					flag = false
-					return
-				end
-				if flag then ground.TimePosition = 0.6 end
-				ground:Play(flag and 0 or nil)
-				if flag then ground.TimePosition = 0.6 end
-			end
-			flag = false
-		else
-			flag = false
-			SoundController:PlaySound(Sounds:FindFirstChild("LeaveHole"), root.Position, false)
-			createHole(root.Position, 1.5)
-			if jump          then jump:Play()          end
-			if ground        then ground:Stop()        end
-			if initialGround then initialGround:Stop() end
-		end
-	end
-
-	task.defer(function()
-		if model:GetAttribute("IsRunning") and walk then walk:Play() end
-	end)
-
-	model:GetAttributeChangedSignal("IsRunning"):Connect(function()
-		if not walk then return end
-		if model:GetAttribute("IsRunning") then walk:Play() else walk:Stop() end
-	end)
-
-	-- matches controller exactly: only Play on true, no Stop on false
-	model:GetAttributeChangedSignal("AttackAnimation"):Connect(function()
-		if not attack then return end
-		if model:GetAttribute("AttackAnimation") then attack:Play() end
-	end)
-
-	model:GetAttributeChangedSignal("Ground"):Connect(updateGround)
-	model:GetAttributeChangedSignal("InitialGround"):Connect(updateGround)
-
-	if model:GetAttribute("Ground") and ground and not ground.IsPlaying then
-		ground.TimePosition = 0.6
-		ground:Play(0)
-		ground.TimePosition = 0.6
-	end
-	if model:GetAttribute("InitialGround") and initialGround and not initialGround.IsPlaying then
-		flag = true
-		initialGround:Play()
-	end
-
 	return model
 end
 
@@ -310,7 +176,6 @@ retireSpider = function(spider)
 		model:SetAttribute("Ground",    true)
 	end
 
-	-- tracked in spider.Trove so eventTrove:Destroy() cancels it before it fires
 	spider.Trove:Add(task.delay(HOLE_EXIT_WAIT, function()
 		local wasAttack     = spider.IsAttack
 		local wasWanderPart = spider.WanderPart
