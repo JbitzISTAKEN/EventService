@@ -1,9 +1,8 @@
-local ReplicatedStorage          = game:GetService("ReplicatedStorage")
-local CollectionService          = game:GetService("CollectionService")
-local HttpService                = game:GetService("HttpService")
-local RunService                 = game:GetService("RunService")
-local TweenService               = game:GetService("TweenService")
-local Debris                     = game:GetService("Debris")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CollectionService = game:GetService("CollectionService")
+local HttpService       = game:GetService("HttpService")
+local RunService        = game:GetService("RunService")
+local TweenService      = game:GetService("TweenService")
 
 local SharedEventUtils           = require(ReplicatedStorage.Shared.SharedEventUtils)
 local MathUtils                  = require(ReplicatedStorage.Utils.MathUtils)
@@ -16,10 +15,21 @@ local Shake                      = require(ReplicatedStorage.Packages.Shake)
 local Observers                  = require(ReplicatedStorage.Packages.Observers)
 local EffectController           = require(ReplicatedStorage.Controllers.EffectController)
 local SkullEmojiEffectController = require(ReplicatedStorage.Controllers.SkullEmojiEffectController)
+local EventController            = require(ReplicatedStorage.Controllers.EventController)
 
 local EventScript   = ReplicatedStorage.Controllers.EventController.Events.Mygame43
 local Mygame43Model = ReplicatedStorage:WaitForChild("Models").Events.Mygame43.mygame43
 local Sounds        = ReplicatedStorage.Sounds.Events.Mygame43
+
+-- gate exactly like Starfall and 4th of July
+repeat task.wait() until EventController:GetActiveEventData("Mygame43")
+
+local eventData = EventController:GetActiveEventData("Mygame43")
+local startedAt = eventData.startedAt
+
+local function timeLeftFor(t)
+    return startedAt + t - workspace:GetServerTimeNow()
+end
 
 local shakeBase = Shake.new()
 shakeBase.Amplitude         = 5.5
@@ -29,17 +39,9 @@ shakeBase.FadeOutTime       = 0.6
 shakeBase.PositionInfluence = Vector3.new(0.5, 0.5, 0.5)
 shakeBase.RotationInfluence = Vector3.new(2.5, 0.5, 0.5)
 
--- wait for spoofer to set the attribute before doing anything
-repeat task.wait() until ReplicatedStorage:GetAttribute("Mygame43")
-
 local trove       = Trove.new()
 local recentlyHit = {}
 local v22         = nil
-
-local function timeLeftFor(t)
-    local startedAt = ReplicatedStorage:GetAttribute("Mygame43StartedAt")
-    return startedAt + t - workspace:GetServerTimeNow()
-end
 
 -- ─── Model ────────────────────────────────────────────────────────────────────
 
@@ -294,17 +296,16 @@ end
 -- ─── Main loop ────────────────────────────────────────────────────────────────
 
 local function loop()
-    -- gate at 7.7s matching decompiled spawn delay
     local gate = timeLeftFor(7.7)
     if gate > 0 then task.wait(gate) end
 
-    while ReplicatedStorage:GetAttribute("Mygame43") do
+    while EventController:GetActiveEventData("Mygame43") do
         task.wait(Random.new():NextNumber(2, 4))
-        if not ReplicatedStorage:GetAttribute("Mygame43") then break end
+        if not EventController:GetActiveEventData("Mygame43") then break end
 
         local numBalls = math.random(1, 2)
         for i = 1, numBalls do
-            if not ReplicatedStorage:GetAttribute("Mygame43") then break end
+            if not EventController:GetActiveEventData("Mygame43") then break end
 
             local targetPos, flightDuration, didHit = pickTarget()
             if targetPos then
@@ -317,7 +318,6 @@ local function loop()
         end
     end
 
-    -- cleanup on attribute cleared
     trove:Destroy()
     recentlyHit = {}
     for _, obj in ipairs(CollectionService:GetTagged("Mygame43")) do
