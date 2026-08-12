@@ -1,4 +1,3 @@
-
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService      = game:GetService("TweenService")
 
@@ -54,11 +53,20 @@ trove:Add(task.delay(math.max(0, timeLeftFor(7)), function()
     local rootsSound = ReplicatedStorage.Sounds.Events["Los Matteos"].Roots
     rootsSound:Play()
 
-    local obj = game:GetObjects("rbxassetid://76357454979877")[1]
+    local obj = game:GetObjects("rbxassetid://79132435562992")[1]
     if obj then
-        obj.Name = "Roots"
-        obj:PivotTo(CFrame.new(spawnPos) * CFrame.new(0, 0, -8.5))
+        obj.Name   = "Roots"
         obj.Parent = workspace
+
+        for _, part in ipairs(obj:GetDescendants()) do
+            if part:IsA("BasePart") and part.Name == "RootRun" then
+                local startZ = part:GetAttribute("StartZ")
+                if startZ then
+                    part:SetAttribute("StartZ", startZ - 8.5)
+                end
+            end
+        end
+
         trove:Add(obj)
     end
 
