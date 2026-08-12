@@ -1,4 +1,3 @@
--- Los Matteos.lua (loadstring target)
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService      = game:GetService("TweenService")
@@ -49,9 +48,6 @@ if not spawnPos then
     end
 end
 
--- 8.2 studs forward on Z axis
-local rootsPos = Vector3.new(spawnPos.X, spawnPos.Y, spawnPos.Z - 8.2)
-
 -- ── Roots ─────────────────────────────────────────────────────────────────────
 
 trove:Add(task.delay(math.max(0, timeLeftFor(7)), function()
@@ -61,7 +57,7 @@ trove:Add(task.delay(math.max(0, timeLeftFor(7)), function()
     local obj = game:GetObjects("rbxassetid://76357454979877")[1]
     if obj then
         obj.Name = "Roots"
-        obj:PivotTo(CFrame.new(rootsPos))
+        obj:PivotTo(CFrame.new(spawnPos) * CFrame.new(0, 0, -8.5))
         obj.Parent = workspace
         trove:Add(obj)
     end
