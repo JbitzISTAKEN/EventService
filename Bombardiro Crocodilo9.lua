@@ -2,7 +2,6 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 local HttpService       = game:GetService("HttpService")
 local RunService        = game:GetService("RunService")
-local TweenService      = game:GetService("TweenService")
 
 local MathUtils        = require(ReplicatedStorage.Utils.MathUtils)
 local Trove            = require(ReplicatedStorage.Packages.Trove)
@@ -13,12 +12,11 @@ local Shake            = require(ReplicatedStorage.Packages.Shake)
 local EffectController = require(ReplicatedStorage.Controllers.EffectController)
 local EventController  = require(ReplicatedStorage.Controllers.EventController)
 
-local EVENT_NAME    = "Bombardiro Crocodilo"
-local EventAssets   = ReplicatedStorage.Controllers.EventController.Events[EVENT_NAME]
-local SvininaAsset  = EventAssets["Svinina Bombardino"]   -- the plane model
-local BombAsset     = EventAssets["Svinina Bombardino"]   -- same mesh used as falling bomb
-local ExplosionAsset = EventAssets["Bombardiro Crocodilo"] -- explosion VFX part
-local Sounds        = ReplicatedStorage.Sounds.Events[EVENT_NAME]
+local EVENT_NAME     = "Bombardiro Crocodilo"
+local EventAssets    = ReplicatedStorage.Controllers.EventController.Events[EVENT_NAME]
+local SvininaAsset   = EventAssets["Svinina Bombardino"]
+local ExplosionAsset = EventAssets["ExplosionBoom"]
+local Sounds         = ReplicatedStorage.Sounds.Events[EVENT_NAME]
 
 local SKY_OFFSET  = 200
 local PLANE_SPEED = 25
@@ -44,7 +42,7 @@ shakeBase.RotationInfluence = Vector3.new(2.5, 0.5, 0.5)
 
 local trove       = Trove.new()
 local recentlyHit = {}
-local planeModels = {}  -- [plane.Name] = svinina Model in workspace
+local planeModels = {}
 
 local WanderFolder = workspace:WaitForChild("Events"):WaitForChild("Wander")
 
@@ -149,7 +147,7 @@ local function createPlane(): BasePart
 	return plane
 end
 
--- ─── Svinina model (the plane visual) ─────────────────────────────────────────
+-- ─── Svinina model (plane visual) ─────────────────────────────────────────────
 
 local function attachSvininaToPlane(plane: BasePart)
 	local model = SvininaAsset:Clone()
@@ -163,17 +161,22 @@ end
 
 local function flyPlane(plane: BasePart)
 	while EventController:GetActiveEventData(EVENT_NAME) and plane.Parent do
-		local target     = getRandomWanderPosition()
-		local startPos   = plane.Position
-		local dist       = (target - startPos).Magnitude
-		local dur        = dist / PLANE_SPEED
-		local elapsed    = 0
-		local done       = false
+		local target   = getRandomWanderPosition()
+		local startPos = plane.Position
+		local dist     = (target - startPos).Magnitude
+		local dur      = dist / PLANE_SPEED
+		local elapsed  = 0
+		local done     = false
 
 		local conn
 		conn = trove:Add(RunService.PostSimulation:Connect(function(dt)
 			debug.profilebegin("Bombardiro:FlyPlane")
-			if not plane.Parent then conn:Disconnect() done = true debug.profileend() return end
+			if not plane.Parent then
+				conn:Disconnect()
+				done = true
+				debug.profileend()
+				return
+			end
 			elapsed = elapsed + dt
 			local p  = math.clamp(elapsed / dur, 0, 1)
 			local x  = startPos.X + (target.X - startPos.X) * p
@@ -182,12 +185,19 @@ local function flyPlane(plane: BasePart)
 			local bo = math.sin(p * math.pi * 4) * BOUNCE_H * (1 - p * 0.3)
 			local nx = startPos.X + (target.X - startPos.X) * math.min(p + 0.01, 1)
 			local nz = startPos.Z + (target.Z - startPos.Z) * math.min(p + 0.01, 1)
-			plane.CFrame = CFrame.lookAt(Vector3.new(x, y + bo, z), Vector3.new(nx, y + bo, nz))
-			if p >= 1 then conn:Disconnect() done = true end
+			plane.CFrame = CFrame.lookAt(
+				Vector3.new(x, y + bo, z),
+				Vector3.new(nx, y + bo, nz)
+			)
+			if p >= 1 then
+				conn:Disconnect()
+				done = true
+			end
 			debug.profileend()
 		end))
 
-		repeat task.wait() until done or not plane.Parent
+		repeat task.wait() until done
+			or not plane.Parent
 			or not EventController:GetActiveEventData(EVENT_NAME)
 		task.wait(0.3)
 	end
@@ -200,7 +210,6 @@ local function dropBomb(plane: BasePart)
 	local groundY   = getGroundY()
 	local impactPos = Vector3.new(dropPos.X, groundY, dropPos.Z)
 
-	-- bomb is a fresh SvininaAsset clone falling through the air
 	local bomb = SvininaAsset:Clone()
 	bomb.PrimaryPart.Anchored = true
 	bomb:PivotTo(CFrame.new(dropPos))
@@ -230,12 +239,14 @@ local function dropBomb(plane: BasePart)
 			conn = nil
 
 			for _, d in bomb:GetDescendants() do
-				if d:IsA("BasePart") then d.Transparency = 1
-				elseif d:IsA("ParticleEmitter") then d:Destroy() end
+				if d:IsA("BasePart") then
+					d.Transparency = 1
+				elseif d:IsA("ParticleEmitter") then
+					d:Destroy()
+				end
 			end
 			task.delay(3, function() trove:Remove(bomb) end)
 
-			-- explosion: clone the Bombardiro Crocodilo asset as VFX emitter
 			local explosion = ExplosionAsset:Clone()
 			explosion.CFrame  = CFrame.new(impactPos)
 			explosion.Parent  = workspace
@@ -253,6 +264,8 @@ local function dropBomb(plane: BasePart)
 	end))
 end
 
+-- ─── Bomb loop ────────────────────────────────────────────────────────────────
+
 local function bombLoop(plane: BasePart)
 	while EventController:GetActiveEventData(EVENT_NAME) and plane.Parent do
 		task.wait(math.random(DROP_MIN, DROP_MAX))
@@ -261,17 +274,22 @@ local function bombLoop(plane: BasePart)
 		local targetPos, _, didHit = pickTarget()
 
 		if targetPos and didHit then
-			local above      = Vector3.new(targetPos.X, plane.Position.Y, targetPos.Z)
-			local steerDist  = (above - plane.Position).Magnitude
-			local steerTime  = steerDist / PLANE_SPEED
-			local steerStart = plane.Position
+			local above        = Vector3.new(targetPos.X, plane.Position.Y, targetPos.Z)
+			local steerDist    = (above - plane.Position).Magnitude
+			local steerTime    = math.max(steerDist / PLANE_SPEED, 0.05)
+			local steerStart   = plane.Position
 			local steerElapsed = 0
-			local steerDone  = false
+			local steerDone    = false
 
 			local steerConn
 			steerConn = trove:Add(RunService.PostSimulation:Connect(function(dt)
 				debug.profilebegin("Bombardiro:Steer")
-				if not plane.Parent then steerConn:Disconnect() steerDone = true debug.profileend() return end
+				if not plane.Parent then
+					steerConn:Disconnect()
+					steerDone = true
+					debug.profileend()
+					return
+				end
 				steerElapsed = steerElapsed + dt
 				local p  = math.clamp(steerElapsed / steerTime, 0, 1)
 				local nx = steerStart.X + (above.X - steerStart.X) * p
@@ -280,9 +298,13 @@ local function bombLoop(plane: BasePart)
 					Vector3.new(nx, plane.Position.Y, nz),
 					Vector3.new(above.X, plane.Position.Y, above.Z)
 				)
-				if p >= 1 then steerConn:Disconnect() steerDone = true end
+				if p >= 1 then
+					steerConn:Disconnect()
+					steerDone = true
+				end
 				debug.profileend()
 			end))
+
 			repeat task.wait() until steerDone or not plane.Parent
 		end
 
@@ -292,7 +314,7 @@ local function bombLoop(plane: BasePart)
 	end
 end
 
--- ─── Sync svinina models to plane CFrame every frame ─────────────────────────
+-- ─── Sync svinina visuals to plane hitbox each frame ─────────────────────────
 
 trove:Add(RunService.PreRender:Connect(function()
 	debug.profilebegin("Bombardiro:BulkMoveTo")
@@ -311,7 +333,7 @@ trove:Add(RunService.PreRender:Connect(function()
 	debug.profileend()
 end))
 
--- ─── Spawn a single plane + its loops ────────────────────────────────────────
+-- ─── Spawn plane ──────────────────────────────────────────────────────────────
 
 local function spawnPlane()
 	local plane = createPlane()
@@ -323,7 +345,6 @@ local function spawnPlane()
 	end)
 
 	attachSvininaToPlane(plane)
-
 	trove:Add(task.spawn(function() flyPlane(plane) end))
 	trove:Add(task.spawn(function() bombLoop(plane) end))
 end
