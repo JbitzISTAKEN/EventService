@@ -44,13 +44,17 @@ local function fireOne(launcher)
     startup.CFrame = launchCF + Vector3.new(0, launcher.Size.Y * 0.5 - startup.Size.Y * 0.5, 0)
     startup.Parent = workspace
     VFX.emit(startup)
-    SoundController:PlaySound(Sounds.Shot:Clone(), startup)
+    local shotSfx = Sounds.Shot:Clone()
+    shotSfx.Parent = startup
+    SoundController:PlaySound(shotSfx)
     task.delay(2, function() startup:Destroy() end)
 
     local proj = EventAssets.Firework:Clone()
-    proj.CFrame  = launchCF
-    proj.Parent  = workspace
-    SoundController:PlaySound(Sounds["Trail Sound Ball"]:Clone(), proj)
+    proj.CFrame = launchCF
+    proj.Parent = workspace
+    local trailSfx = Sounds["Trail Sound Ball"]:Clone()
+    trailSfx.Parent = proj
+    SoundController:PlaySound(trailSfx)
 
     local rise = TweenService:Create(proj, TweenInfo.new(travel, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { CFrame = peakCF })
     rise:Play()
@@ -105,7 +109,6 @@ local function fireOne(launcher)
     end)
 end
 
--- watch for rise completion then start salvo
 local risen = 0
 local function onRise()
     risen += 1
