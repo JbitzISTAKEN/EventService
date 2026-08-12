@@ -332,14 +332,22 @@ local function main()
 
 	startVisuals()
 
-	for _ = 1, math.random(MIN_TRALALEROS, MAX_TRALALEROS) do
-		if not isActive then break end
-		spawnShark("Tralalero Tralala")
-	end
-	for _ = 1, math.random(MIN_ORCALEROS, MAX_ORCALEROS) do
-		if not isActive then break end
-		spawnShark("Orcalero Orcala")
-	end
+	-- mirrors: task.delay(v12.startedAt + 4 - workspace:GetServerTimeNow(), ...)
+	local eventData = EventController:GetActiveEventData(EVENT_NAME)
+	local delayTime = math.max((eventData.startedAt + 4) - workspace:GetServerTimeNow(), 0)
+
+	task.delay(delayTime, function()
+		if not isActive then return end
+
+		for _ = 1, math.random(MIN_TRALALEROS, MAX_TRALALEROS) do
+			if not isActive then break end
+			spawnShark("Tralalero Tralala")
+		end
+		for _ = 1, math.random(MIN_ORCALEROS, MAX_ORCALEROS) do
+			if not isActive then break end
+			spawnShark("Orcalero Orcala")
+		end
+	end)
 
 	while EventController:GetActiveEventData(EVENT_NAME) do
 		task.wait(1)
@@ -357,11 +365,11 @@ local function main()
 		if hitbox then hitbox:Destroy() end
 	end
 
-	sharks         = {}
-	sharkModels    = {}
-	sharkTasks     = {}
+	sharks           = {}
+	sharkModels      = {}
+	sharkTasks       = {}
 	recentlyTargeted = {}
-	activeAttacks  = 0
+	activeAttacks    = 0
 
 	eventTrove:Destroy()
 end
