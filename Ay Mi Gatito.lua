@@ -13,14 +13,11 @@ local EVENT_NAME     = "Ay Mi Gatito"
 local TAG_NAME       = "Gatito"
 local BLOCKING_TRAIT = ":3"
 
-local EventAssets  = ReplicatedStorage.Controllers.EventController.Events[EVENT_NAME]
-local GatitoAssets = EventAssets.Gatitos
-
-local VARIANTS = {
-    GatitoAssets:WaitForChild("Gatito"),
-    GatitoAssets:WaitForChild("Angry Gatito"),
-    GatitoAssets:WaitForChild("Crying Gatito"),
-}
+-- Exact same VARIANTS list as the real server module.
+-- No variant = plain Gatito (observer falls back to script.Gatitos.Gatito).
+-- "Angry Gatito" and "Crying Gatito" map to script.Gatitos["Angry Gatito"] etc.
+local VARIANTS     = { "Angry Gatito", "Crying Gatito" }
+local variantIndex = 1
 
 local WANDER_FOLDER = workspace:WaitForChild("Events"):WaitForChild("Wander")
 
@@ -45,7 +42,6 @@ local eventTrove      = Trove.new()
 local spawnedEntities = {}
 local lockedTargets   = {}
 local isActive        = true
-local variantIndex    = 1
 local rng             = Random.new()
 
 -- ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -65,9 +61,9 @@ end
 local function randomPointInPart(part: BasePart): Vector3
     local s = part.Size
     return part.Position + Vector3.new(
-        (math.random() - 0.5) * s.X,
+        rng:NextNumber(-s.X / 2, s.X / 2),
         0,
-        (math.random() - 0.5) * s.Z
+        rng:NextNumber(-s.Z / 2, s.Z / 2)
     )
 end
 
@@ -87,55 +83,41 @@ local function hasBlockingTrait(animal)
 end
 
 -- ─── Model ────────────────────────────────────────────────────────────────────
+-- Matches createGatito in the real server module exactly:
+-- bare Model + invisible HumanoidRootPart + Variant attribute + Gatito tag.
+-- The client observer reads Variant and clones the right mesh onto it.
 
 local function createGatito(position: Vector3): Model
-    local template = VARIANTS[variantIndex]
-    variantIndex   = variantIndex % #VARIANTS + 1
-
-    local model = template:Clone()
+    local model = Instance.new("Model")
     model.Name  = "Gatito"
 
-    -- The client observer does model:WaitForChild("HumanoidRootPart") at line 319.
-    -- The cloned asset's root part has a different name, so we inject a proper
-    -- invisible HumanoidRootPart that the observer finds immediately.
-    local existingRoot = model:FindFirstChild("HumanoidRootPart")
-
-    local root
-    if existingRoot and existingRoot:IsA("BasePart") then
-        root = existingRoot
-    else
-        -- Rename whatever the asset calls its primary part, or make a new one
-        local assetRoot = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
-        if assetRoot then
-            -- Don't rename the visual mesh root — make a dedicated invisible one
-        end
-        root          = Instance.new("Part")
-        root.Name     = "HumanoidRootPart"
-        root.Size     = Vector3.new(2, 2, 2)
-        root.Transparency = 1
-        root.Anchored   = true
-        root.CanCollide = false
-        root.CanQuery   = false
-        root.CanTouch   = false
-        root.Parent     = model
-    end
-
-    root.Anchored   = true
-    root.CanCollide = false
-    root.CanQuery   = false
-    root.CanTouch   = false
-    root.CFrame     = CFrame.new(stickToGround(position))
+    local root = Instance.new("Part")
+    root.Name         = "HumanoidRootPart"
+    root.Size         = Vector3.new(2, 2, 2)
+    root.Transparency = 1
+    root.Anchored     = true
+    root.CanCollide   = false
+    root.CFrame       = CFrame.new(stickToGround(position))
+    root.Parent       = model
     model.PrimaryPart = root
 
+    -- Cycle through variants exactly like the real module:
+    -- totalOptions = #VARIANTS + 1 so every 3rd gatito is plain (no Variant attribute)
+    local totalOptions  = #VARIANTS + 1
+    local randomVariant = VARIANTS[variantIndex]
+    if randomVariant then
+        model:SetAttribute("Variant", randomVariant)
+    end
     model:SetAttribute("Dance",          true)
     model:SetAttribute("IsRunning",      false)
     model:SetAttribute("IsChasing",      false)
     model:SetAttribute("AttackAnimation",false)
 
-    -- Parent BEFORE tagging so the model is in workspace when the observer fires
-    model.Parent = workspace
-
     CollectionService:AddTag(model, TAG_NAME)
+
+    variantIndex = (variantIndex % totalOptions) + 1
+
+    model.Parent = workspace
     return model
 end
 
@@ -153,7 +135,6 @@ local function wander(hunterData)
     if distance < 1 then return end
 
     entity:SetAttribute("IsRunning", true)
-    entity:SetAttribute("Dance",     false)
 
     local wanderTrove = eventTrove:Extend()
     wanderTrove:Add(task.spawn(function()
@@ -167,7 +148,6 @@ local function wander(hunterData)
         })
         if entity.Parent then
             entity:SetAttribute("IsRunning", false)
-            entity:SetAttribute("Dance",     true)
         end
         wanderTrove:Clean()
     end))
@@ -184,7 +164,6 @@ local function followAndAttackAnimal(gatitoData, targetAnimal)
     lockedTargets[targetAnimal] = true
     gatito:SetAttribute("IsChasing", true)
     gatito:SetAttribute("IsRunning", true)
-    gatito:SetAttribute("Dance",     false)
 
     local chaseTrove = eventTrove:Extend()
 
@@ -210,8 +189,8 @@ local function followAndAttackAnimal(gatitoData, targetAnimal)
 
             local elapsed = 0
             local attackConn
-            attackConn = chaseTrove:Add(RunService.Heartbeat:Connect(function(dt)
-                elapsed += dt
+            attackConn = chaseTrove:Add(RunService.Heartbeat:Connect(function(dt2)
+                elapsed += dt2
                 if elapsed >= ATTACK_DURATION
                     or not isActive
                     or not targetAnimal or not targetAnimal.Parent or not targetAnimal.PrimaryPart
@@ -220,15 +199,19 @@ local function followAndAttackAnimal(gatitoData, targetAnimal)
                     attackConn:Disconnect()
                     return
                 end
-                local tPos = targetAnimal.PrimaryPart.Position
-                local mPos = gatito.PrimaryPart.Position
-                local d    = tPos - mPos
-                if d.Magnitude > CHASE_STICK_DIST then
-                    local dir     = d.Unit
-                    local flatDir = Vector3.new(dir.X, 0, dir.Z)
+
+                local tPos  = targetAnimal.PrimaryPart.Position
+                local mPos  = gatito.PrimaryPart.Position
+                local d2    = tPos - mPos
+                local dist2 = d2.Magnitude
+
+                if dist2 > CHASE_STICK_DIST then
+                    local dir2    = d2.Unit
+                    local flatDir = Vector3.new(dir2.X, 0, dir2.Z)
                     if flatDir.Magnitude < 1e-4 then return end
-                    local newPos = stickToGround(mPos + dir * math.min(CHASE_SPEED * dt, d.Magnitude))
-                    gatito:PivotTo(CFrame.new(newPos, newPos + flatDir.Unit))
+                    flatDir = flatDir.Unit
+                    local newPos = stickToGround(mPos + dir2 * math.min(CHASE_SPEED * dt2, dist2))
+                    gatito:PivotTo(CFrame.new(newPos, newPos + flatDir))
                 end
             end))
 
@@ -252,7 +235,6 @@ local function followAndAttackAnimal(gatitoData, targetAnimal)
 
         if isActive and gatito and gatito.Parent then
             gatito:SetAttribute("IsChasing", false)
-            gatito:SetAttribute("Dance",     true)
             wander(gatitoData)
         end
 
@@ -269,11 +251,7 @@ local function spawnGatito(homePart: BasePart)
     local gatitoTrove = eventTrove:Extend()
     gatitoTrove:Add(model)
 
-    local data = {
-        Model = model,
-        Home  = homePart,
-        Trove = gatitoTrove,
-    }
+    local data = { Model = model, Home = homePart, Trove = gatitoTrove }
     table.insert(spawnedEntities, data)
     return data
 end
@@ -281,12 +259,13 @@ end
 -- ─── Main ─────────────────────────────────────────────────────────────────────
 
 local function main()
-    local timeUntilActivation = (startedAt + ACTIVATION_DELAY) - workspace:GetServerTimeNow()
-    if timeUntilActivation > 0 then
-        task.wait(timeUntilActivation)
-    end
+    -- Mirror real module: wait out remaining time until startedAt + 7
+    local elapsed   = workspace:GetServerTimeNow() - startedAt
+    local remaining = math.max(0, ACTIVATION_DELAY - elapsed)
+    if remaining > 0 then task.wait(remaining) end
     if not isActive then return end
 
+    -- Mirror real module: iterate WANDER_FOLDER children, spawn per Wander part
     local wanderParts = getWanderParts()
     if #wanderParts == 0 then
         warn("[AyMiGatito] No BaseParts in", WANDER_FOLDER:GetFullName())
@@ -299,7 +278,7 @@ local function main()
         end
     end
 
-    -- wander tick
+    -- wander tick — exact logic from real module
     eventTrove:Add(task.spawn(function()
         while isActive do
             for _, hunterData in ipairs(spawnedEntities) do
@@ -322,7 +301,7 @@ local function main()
         end
     end))
 
-    -- attack tick
+    -- attack tick — exact logic from real module
     local cachedAnimals = CollectionService:GetTagged("Animal")
     eventTrove:Add(CollectionService:GetInstanceAddedSignal("Animal"):Connect(function(inst)
         table.insert(cachedAnimals, inst)
