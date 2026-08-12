@@ -1,16 +1,13 @@
 -- Los Matteos.lua (loadstring target)
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService        = game:GetService("RunService")
-local Debris            = game:GetService("Debris")
 
-local Trove       = require(ReplicatedStorage.Packages.Trove)
-local CreateTween = require(ReplicatedStorage.Packages.CreateTween)
-local EvLightning = require(ReplicatedStorage.Packages.EvLightning)
-local Shake       = require(ReplicatedStorage.Packages.Shake)
-local ShakePresets = require(ReplicatedStorage.Shared.ShakePresets)
-local VFX          = require(ReplicatedStorage.Shared.VFX)
-local SoundCtrl    = require(ReplicatedStorage.Controllers.SoundController)
+local Trove           = require(ReplicatedStorage.Packages.Trove)
+local CreateTween     = require(ReplicatedStorage.Packages.CreateTween)
+local EvLightning     = require(ReplicatedStorage.Packages.EvLightning)
+local Shake           = require(ReplicatedStorage.Packages.Shake)
+local ShakePresets    = require(ReplicatedStorage.Shared.ShakePresets)
+local SoundCtrl       = require(ReplicatedStorage.Controllers.SoundController)
 local EventController = require(ReplicatedStorage.Controllers.EventController)
 
 local EVENT_NAME = "Los Matteos"
@@ -27,6 +24,7 @@ local trove = Trove.new()
 -- ── Attributes ────────────────────────────────────────────────────────────────
 
 ReplicatedStorage:SetAttribute("LosMatteosEvent", true)
+
 trove:Add(task.delay(math.max(0, timeLeftFor(3)), function()
     ReplicatedStorage:SetAttribute("LosMatteosEventNightTime", true)
 end))
@@ -38,23 +36,24 @@ end)
 
 -- ── Roots ─────────────────────────────────────────────────────────────────────
 
-trove:Add(task.delay(math.max(0, timeLeftFor(3)), function()
+trove:Add(task.delay(math.max(0, timeLeftFor(7)), function()
+    local rootsSound = ReplicatedStorage.Sounds.Events["Los Matteos"].Roots
+    rootsSound:Play()
+
     local roots = game:GetObjects("rbxassetid://76357454979877")[1]
-    if not roots then return end
-    roots.Name = "Roots"
+    roots.Name   = "Roots"
+    roots.Parent = workspace
+    trove:Add(roots)
 
     local mapCenterPart = workspace:FindFirstChild("MapCenterGround")
-    local spawnPos = mapCenterPart and mapCenterPart.Position or Vector3.new(0, 0, 0)
+    local centerPos = mapCenterPart and mapCenterPart.Position or Vector3.new(0, 0, 0)
 
-    roots:PivotTo(CFrame.new(spawnPos))
-
-    -- stagger parts in by distance from center, mirrors server START_DELAY + DURATION logic
     local entries = {}
     for _, d in roots:GetDescendants() do
         if d:IsA("BasePart") then
             table.insert(entries, {
                 part     = d,
-                distance = (d.Position - spawnPos).Magnitude,
+                distance = (d.Position - centerPos).Magnitude,
             })
             d.Parent = nil
         end
@@ -67,14 +66,19 @@ trove:Add(task.delay(math.max(0, timeLeftFor(3)), function()
     local range = math.max(maxD - minD, 1)
     local DURATION = 5
 
-    roots.Parent = workspace
-    trove:Add(roots)
+    local lastDelay    = 0
+    local lastTweenDur = 0.1
 
     for i, entry in entries do
         local norm     = (entry.distance - minD) / range
         local delay    = norm * DURATION
         local nextNorm = entries[i + 1] and ((entries[i + 1].distance - minD) / range) or (norm + 0.02)
         local tweenDur = math.max((nextNorm - norm) * DURATION, 0.05)
+
+        if i == #entries then
+            lastDelay    = delay
+            lastTweenDur = tweenDur
+        end
 
         trove:Add(task.delay(delay, function()
             if not roots.Parent then return end
@@ -89,17 +93,22 @@ trove:Add(task.delay(math.max(0, timeLeftFor(3)), function()
             )
         end))
     end
+
+    trove:Add(task.delay(lastDelay + lastTweenDur, function()
+        rootsSound:Stop()
+        rootsSound.Looped = false
+    end))
 end))
 
 -- ── Lightning ─────────────────────────────────────────────────────────────────
 
 local boltPart = Instance.new("Part")
-boltPart.Anchored     = true
-boltPart.CanCollide   = false
-boltPart.TopSurface   = Enum.SurfaceType.Smooth
+boltPart.Anchored      = true
+boltPart.CanCollide    = false
+boltPart.TopSurface    = Enum.SurfaceType.Smooth
 boltPart.BottomSurface = Enum.SurfaceType.Smooth
-boltPart.Material     = Enum.Material.Neon
-boltPart.Color        = Color3.fromRGB(96, 234, 255)
+boltPart.Material      = Enum.Material.Neon
+boltPart.Color         = Color3.fromRGB(96, 234, 255)
 
 local shakeBase = Shake.new()
 shakeBase.Amplitude         = 3
@@ -113,8 +122,6 @@ local strikeId = 0
 
 local function fireLocalLightning(strikePos)
     strikeId += 1
-    local id   = strikeId
-    local rand = Random.new(id)
 
     local camDist = (workspace.CurrentCamera.CFrame.Position - strikePos).Magnitude
     if camDist <= 75 then
@@ -138,16 +145,15 @@ local function fireLocalLightning(strikePos)
         material    = Enum.Material.Neon,
     })
 
-    local boltModel    = Instance.new("Model")
-    boltModel.Name     = "LightningBolt"
-    bolt.model         = boltModel
+    local boltModel = Instance.new("Model")
+    boltModel.Name  = "LightningBolt"
+    bolt.model      = boltModel
 
     local lines = bolt:GetLines()
     table.sort(lines, function(a, b) return a.origin.Y > b.origin.Y end)
 
-    local lowestY  = lines[#lines].origin.Y
     local highestY = lines[1].origin.Y
-    local yRange   = math.max(highestY - lowestY, 1)
+    local yRange   = math.max(highestY - lines[#lines].origin.Y, 1)
     local baseDelay = bolt.random:NextInteger(10, 20) / 100
 
     local tweenedParts = {}
@@ -176,7 +182,7 @@ local function fireLocalLightning(strikePos)
 
     task.delay(baseDelay + 0.05, function()
         SoundCtrl:PlaySound(
-            ReplicatedStorage.Sounds.Events["Los Matteos"]["HitNothing"],
+            ReplicatedStorage.Sounds.Events["Los Matteos"].HitNothing,
             strikePos,
             false
         )
@@ -202,11 +208,19 @@ local function fireLocalLightning(strikePos)
         end)
     end)
 
+    -- "Lightning Strike" fires at bolt origin when bolt renders — exact from decompiled
+    SoundCtrl:PlaySound(
+        ReplicatedStorage.Sounds.Events["Los Matteos"]["Lightning Strike"],
+        boltStart,
+        false
+    )
+
     boltModel.Parent = workspace.CurrentCamera
     bolt.drew        = true
 end
 
--- lightning loop starts at t=8, matches server LIGHTNING_START_DELAY
+-- ── Lightning loop ────────────────────────────────────────────────────────────
+
 trove:Add(task.delay(math.max(0, timeLeftFor(8)), function()
     local rainArea = workspace.Events["Los Matteos"]:FindFirstChild("RainArea")
 
@@ -223,16 +237,15 @@ trove:Add(task.delay(math.max(0, timeLeftFor(8)), function()
                 math.random(-s.Z / 2, s.Z / 2)
             )).Position
         else
-            local angle = math.random() * math.pi * 2
-            local dist  = math.random(20, 80)
-            local base  = workspace:FindFirstChild("MapCenterGround")
+            local angle  = math.random() * math.pi * 2
+            local dist   = math.random(20, 80)
+            local base   = workspace:FindFirstChild("MapCenterGround")
             local origin = base and base.Position or Vector3.new(0, 0, 0)
-            strikePos   = origin + Vector3.new(math.cos(angle) * dist, 0, math.sin(angle) * dist)
+            strikePos    = origin + Vector3.new(math.cos(angle) * dist, 0, math.sin(angle) * dist)
         end
 
         task.spawn(fireLocalLightning, strikePos)
 
-        -- double strike, matches server math.random(1,2)
         if math.random(1, 2) == 2 then
             task.wait(0.3)
             task.spawn(fireLocalLightning, strikePos + Vector3.new(
