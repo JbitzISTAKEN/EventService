@@ -8,16 +8,16 @@ local HttpService       = game:GetService("HttpService")
 local RunService        = game:GetService("RunService")
 local TweenService      = game:GetService("TweenService")
 
-local SharedEventUtils        = require(ReplicatedStorage.Shared.SharedEventUtils)
-local MathUtils               = require(ReplicatedStorage.Utils.MathUtils)
-local Trove                   = require(ReplicatedStorage.Packages.Trove)
-local Spr                     = require(ReplicatedStorage.Packages.Spr)
-local VFX                     = require(ReplicatedStorage.Shared.VFX)
-local SoundController         = require(ReplicatedStorage.Controllers.SoundController)
-local ShakePresets            = require(ReplicatedStorage.Shared.ShakePresets)
-local Shake                   = require(ReplicatedStorage.Packages.Shake)
-local Observers               = require(ReplicatedStorage.Packages.Observers)
-local EffectController        = require(ReplicatedStorage.Controllers.EffectController)
+local SharedEventUtils           = require(ReplicatedStorage.Shared.SharedEventUtils)
+local MathUtils                  = require(ReplicatedStorage.Utils.MathUtils)
+local Trove                      = require(ReplicatedStorage.Packages.Trove)
+local Spr                        = require(ReplicatedStorage.Packages.Spr)
+local VFX                        = require(ReplicatedStorage.Shared.VFX)
+local SoundController            = require(ReplicatedStorage.Controllers.SoundController)
+local ShakePresets               = require(ReplicatedStorage.Shared.ShakePresets)
+local Shake                      = require(ReplicatedStorage.Packages.Shake)
+local Observers                  = require(ReplicatedStorage.Packages.Observers)
+local EffectController           = require(ReplicatedStorage.Controllers.EffectController)
 local SkullEmojiEffectController = require(ReplicatedStorage.Controllers.SkullEmojiEffectController)
 
 local CurrentCamera = workspace.CurrentCamera
@@ -25,8 +25,8 @@ local trove         = Trove.new()
 local recentlyHit   = {}
 local IsActive      = true
 
--- fakeEventData must be in scope from spoofer — startedAt is the anchor for all timings
-local startedAt = fakeEventData.startedAt
+-- startedAt passed in from spoofer via ... — fixes loadstring scope gap
+local startedAt = ...
 
 local function timeLeftFor(t)
     return startedAt + t - workspace:GetServerTimeNow()
@@ -80,13 +80,11 @@ trove:Add(Observers.observeTag("Mygame43", function(model)
 
     local animator = v22.Humanoid and v22.Humanoid.Animator
     if animator then
-        -- decompiled lines 114-117
         local idle  = animator:LoadAnimation(eventScript.Idle)
         local spawn = animator:LoadAnimation(eventScript.Spawn)
 
         idle:Play()
         spawn:Play()
-        -- sync spawn anim to where server would be — decompiled line 117
         spawn.TimePosition = math.max(0, 7 - timeLeftFor(7))
 
         trove:Add(function()
@@ -95,7 +93,7 @@ trove:Add(Observers.observeTag("Mygame43", function(model)
         end)
     end
 
-    -- ── Floating orbs at 7.7s — decompiled lines 119-139 ──────────────────
+    -- floating orbs at 7.7s
     local orbGate = timeLeftFor(7.7)
     trove:Add(task.delay(math.max(0, orbGate), function()
         for i = 1, 4 do
@@ -128,7 +126,7 @@ trove:Add(Observers.observeTag("Mygame43", function(model)
         end
     end))
 
-    -- ── VFX + camera focus at 3.7s — decompiled lines 142-156 ─────────────
+    -- VFX + camera focus at 3.7s
     local focusGate = timeLeftFor(3.7)
     trove:Add(task.delay(math.max(0, focusGate), function()
         VFX.enable(v22)
@@ -145,7 +143,6 @@ trove:Add(Observers.observeTag("Mygame43", function(model)
 
         task.delay(0.6, function()
             focusConn:Disconnect()
-            -- decompiled line 154
             SkullEmojiEffectController:Play(3, "Lower")
         end)
     end))
