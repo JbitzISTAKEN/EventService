@@ -322,7 +322,7 @@ local function main()
 		end)
 	end
 
-ReplicatedStorage:SetAttribute("SummerHourEvent", true)
+	ReplicatedStorage:SetAttribute("SummerHourEvent", true)
 	startSunAnimation()
 	startAttackLoop()
 
@@ -344,3 +344,6 @@ ReplicatedStorage:SetAttribute("SummerHourEvent", true)
 	table.clear(recentlyTargeted)
 
 	ReplicatedStorage:SetAttribute("SummerHourEvent", nil)
+end
+
+task.spawn(main)
