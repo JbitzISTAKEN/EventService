@@ -21,34 +21,28 @@ repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
 
 -- ─── State ────────────────────────────────────────────────────────────────────
 
-local eventTrove       = Trove.new()
+local eventTrove                    = Trove.new()
 local recentlyTargeted: {[string]: number} = {}
-local isActive         = true
+local isActive                      = true
+local isRunning                     = true
 
 local EventScript = ReplicatedStorage.Controllers.EventController.Events["Summer Hour"]
 
--- sun spring state — mirrors decompiled exactly
 local v5 = Spring.new(11.203) v5.Speed = 10  v5.Damper = 0.4
 local v6 = Spring.new(0)      v6.Speed = 3   v6.Damper = 0.4
 local v7 = Spring.new(0)      v7.Speed = 3   v7.Damper = 0.4
 local v8 = Spring.new(0)      v8.Speed = 3   v8.Damper = 0.4
 
-local sunScale   = 0.25
-local sunYaw     = 0
-local sunRoll    = 0
-local isAiming   = false
-local isRunning  = true
+local sunScale  = 0.25
+local sunYaw    = 0
+local sunRoll   = 0
+local isAiming  = false
 
-local sunModel: Model?  = nil
-local sunHome:  CFrame? = nil
+local sunModel: Model?         = nil
+local sunHome:  CFrame?        = nil
 local idleTrack: AnimationTrack? = nil
 
 -- ─── Helpers ──────────────────────────────────────────────────────────────────
-
-local function getSun(): Model?
-	local folder = workspace.Events:FindFirstChild(EVENT_NAME)
-	return folder and folder:FindFirstChild("SunTrait") or nil
-end
 
 local function decodeTraits(animal: Instance): {string}
 	local raw = animal:GetAttribute("Traits")
@@ -75,13 +69,13 @@ local function addSunTrait(animal: Instance)
 end
 
 local function getValidCandidates(): {Instance}
-	local now        = workspace:GetServerTimeNow()
-	local candidates = {}
+	local now = workspace:GetServerTimeNow()
 
 	for name, last in pairs(recentlyTargeted) do
 		if now - last > 20 then recentlyTargeted[name] = nil end
 	end
 
+	local candidates = {}
 	for _, animal in ipairs(CollectionService:GetTagged("Animal")) do
 		if animal and animal.Parent and animal.PrimaryPart
 			and not recentlyTargeted[animal.Name]
@@ -95,15 +89,14 @@ local function getValidCandidates(): {Instance}
 	return candidates
 end
 
--- ─── Projectile — mirrors pulse() from decompiled client ─────────────────────
+-- ─── Projectile ───────────────────────────────────────────────────────────────
 
-local function fireProjectile(animal: Instance)
-	if not sunModel or not sunHome then return end
+local function fireProjectile(animal: Instance): number
+	if not sunModel or not sunHome then return 0 end
 
 	local animalPos = ClientEventUtils.getAnimalPosition(animal, { top = true })
-	if animalPos == Vector3.new(0, 0, 0) then return end
+	if animalPos == Vector3.new(0, 0, 0) then return 0 end
 
-	-- impulse the scale spring — same as pulse()
 	v5:Impulse(130)
 
 	task.spawn(function()
@@ -115,9 +108,8 @@ local function fireProjectile(animal: Instance)
 		)
 	end)
 
-	-- clone sun, fly it to animal, destroy on arrival
-	local clone    = sunModel:Clone()
-	clone.Parent   = workspace
+	local clone = sunModel:Clone()
+	clone.Parent = workspace
 
 	local animator = clone:FindFirstChildWhichIsA("Animator", true)
 	local idleAnim = EventScript:FindFirstChild("IdleAnimation")
@@ -127,10 +119,10 @@ local function fireProjectile(animal: Instance)
 		track:Play()
 	end
 
-	local startCF   = sunModel:GetPivot()
-	local startPos  = startCF.Position
-	local startRot  = startCF.Rotation
-	local fireTime  = workspace:GetServerTimeNow()
+	local startCF    = sunModel:GetPivot()
+	local startPos   = startCF.Position
+	local startRot   = startCF.Rotation
+	local fireTime   = workspace:GetServerTimeNow()
 	local travelTime = (animalPos - startPos).Magnitude / 90
 	local lastTarget = animalPos
 	local conn: RBXScriptConnection
@@ -140,7 +132,8 @@ local function fireProjectile(animal: Instance)
 		if cur ~= Vector3.new(0, 0, 0) then lastTarget = cur end
 
 		local t = TweenService:GetValue(
-			travelTime == 0 and 1 or math.clamp((workspace:GetServerTimeNow() - fireTime) / travelTime, 0, 1),
+			travelTime == 0 and 1
+				or math.clamp((workspace:GetServerTimeNow() - fireTime) / travelTime, 0, 1),
 			Enum.EasingStyle.Quad,
 			Enum.EasingDirection.In
 		)
@@ -155,39 +148,31 @@ local function fireProjectile(animal: Instance)
 		end
 	end)
 
-	-- safety cleanup
 	task.delay(10, function()
 		if conn.Connected then conn:Disconnect() end
 		if clone.Parent then clone:Destroy() end
 	end)
+
+	return travelTime
 end
 
--- replaces Projectile:FireAllClients + Burst:FireAllClients
+-- ─── Strike — aim → fire → burst → trait, fully local ────────────────────────
+
 local function tryShootAnimal(animal: Instance)
-	if not animal or not animal.Parent then return end
+	if not animal or not animal.Parent or not animal.PrimaryPart then return end
 
 	local now      = workspace:GetServerTimeNow()
 	local aimDelay = 0.7
 
-	if not animal.PrimaryPart then return end
-
-	-- calculate travel time
-	local travelTime = 2.0
-	if sunModel and sunHome then
-		local sunPos    = sunHome.Position
-		local animalPos = animal.PrimaryPart.Position + Vector3.new(0, animal:GetExtentsSize().Y, 0)
-		local distance  = (animalPos - sunPos).Magnitude
-		travelTime      = distance / 90
-	end
-
+	-- mark targeted immediately so the loop doesn't double-pick
 	recentlyTargeted[animal.Name] = now
 
-	-- aim sun at animal
+	-- aim the sun toward the animal
 	if sunHome then
 		local animalPos = ClientEventUtils.getAnimalPosition(animal, { top = true })
 		if animalPos ~= Vector3.new(0, 0, 0) then
-			local rot    = CFrame.lookAt(sunHome.Position, animalPos).Rotation
-			local rx, ry, rz = (sunHome.Rotation:Inverse() * rot):ToEulerAnglesXYZ()
+			local rot          = CFrame.lookAt(sunHome.Position, animalPos).Rotation
+			local rx, ry, rz   = (sunHome.Rotation:Inverse() * rot):ToEulerAnglesXYZ()
 			isAiming = true
 			sunScale = rx
 			sunYaw   = ry
@@ -195,14 +180,13 @@ local function tryShootAnimal(animal: Instance)
 		end
 	end
 
-	-- wait aim delay, then fire projectile
 	eventTrove:Add(task.delay(aimDelay, function()
 		if not isActive then return end
 		if not animal or not animal.Parent then return end
 
-		fireProjectile(animal)
+		-- fire and get travel time back from the projectile
+		local travelTime = fireProjectile(animal)
 
-		-- reset sun aim after 0.5s
 		task.delay(0.5, function()
 			sunScale = 0.25
 			sunYaw   = 0
@@ -210,11 +194,10 @@ local function tryShootAnimal(animal: Instance)
 			isAiming = false
 		end)
 
-		-- burst + trait after travel
+		-- burst VFX + trait land after projectile arrives
 		task.delay(travelTime, function()
 			if not animal or not animal.Parent then return end
 
-			-- replaces Burst:FireAllClients
 			local burstVFX = EventScript:FindFirstChild("Burst")
 			if burstVFX then
 				ClientEventUtils.playBurst(
@@ -229,10 +212,9 @@ local function tryShootAnimal(animal: Instance)
 	end))
 end
 
--- ─── Sun animation — mirrors PostSimulation + wander task from decompiled ─────
+-- ─── Sun animation ────────────────────────────────────────────────────────────
 
 local function startSunAnimation()
-	-- PostSimulation: scale + pivot sun with springs
 	eventTrove:Add(RunService.PostSimulation:Connect(function()
 		if not isRunning or not sunModel or not sunHome then return end
 
@@ -246,7 +228,6 @@ local function startSunAnimation()
 		sunModel:PivotTo(cf + Vector3.new(0, math.sin(t * 1.75) * 7, 0))
 	end))
 
-	-- idle wander — mirrors the task.spawn loop from decompiled
 	eventTrove:Add(task.spawn(function()
 		while isRunning do
 			if not isAiming then
@@ -296,16 +277,23 @@ end
 local function main()
 	ReplicatedStorage:SetAttribute("SummerHourEvent", true)
 
-	sunModel = getSun()
+	sunModel = CollectionService:GetTagged("Animal") and (function()
+		local folder = workspace.Events:FindFirstChild(EVENT_NAME)
+		return folder and folder:FindFirstChild("SunTrait") or nil
+	end)() or nil
+
+	-- cleaner getSun inline — avoids the helper since we only call it once
+	local folder = workspace.Events:FindFirstChild(EVENT_NAME)
+	sunModel     = folder and folder:FindFirstChild("SunTrait") or nil
+
 	if not sunModel then
-		warn("[SummerHour] SunTrait not found")
+		warn("[SummerHour] SunTrait not found — aborting")
 		return
 	end
 
 	local homeAttr = sunModel:GetAttribute("Home")
 	sunHome = typeof(homeAttr) == "CFrame" and homeAttr or sunModel:GetPivot()
 
-	-- load idle animation if available
 	local animator = sunModel:FindFirstChildWhichIsA("Animator", true)
 	local idleAnim = EventScript:FindFirstChild("IdleAnimation")
 	if animator and idleAnim and idleAnim:IsA("Animation") then
@@ -325,6 +313,7 @@ local function main()
 	startSunAnimation()
 	startAttackLoop()
 
+	-- poll for event end
 	while EventController:GetActiveEventData(EVENT_NAME) do
 		task.wait(1)
 	end
