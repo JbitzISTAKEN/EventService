@@ -1,11 +1,12 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService        = game:GetService("RunService")
-local Observers         = require(ReplicatedStorage.Packages.Observers)
-local Trove             = require(ReplicatedStorage.Packages.Trove)
-local Spr               = require(ReplicatedStorage.Packages.Spr)
-local VFX               = require(ReplicatedStorage.Shared.VFX)
-local SoundController   = require(ReplicatedStorage.Controllers.SoundController)
-local ClientEventUtils  = require(ReplicatedStorage.Controllers.EventController.ClientEventUtils)
+
+local Observers        = require(ReplicatedStorage.Packages.Observers)
+local Trove            = require(ReplicatedStorage.Packages.Trove)
+local Spr              = require(ReplicatedStorage.Packages.Spr)
+local VFX              = require(ReplicatedStorage.Shared.VFX)
+local SoundController  = require(ReplicatedStorage.Controllers.SoundController)
+local ClientEventUtils = require(ReplicatedStorage.Controllers.EventController.ClientEventUtils)
 
 local EventScript = ReplicatedStorage.Controllers.EventController.Events["Chicleteira Bicicleteira"]
 local Sounds      = ReplicatedStorage.Sounds.Events["Chicleteira Bicicleteira"]
@@ -17,12 +18,14 @@ local managedObj = Trove.new()
 local BIKE_SPEED   = 35
 local PATH_START_Z = -132.1
 local PATH_END_Z   = 251.706
+local TRAVEL_TIME  = math.abs(PATH_END_Z - PATH_START_Z) / BIKE_SPEED
 
 local DEFAULT_LANES = {
     { x = -419.394, baseY = -9.074 },
     { x = -402.863, baseY = -9.074 },
 }
 
+-- ── moving bike ────────────────────────────────────────────────────────────
 local function spawnBike(startCF, endCF, jumpCF)
     local bike = EventScript["Chicleteira Bicicleteira"]:Clone()
     bike:PivotTo(startCF)
@@ -37,7 +40,7 @@ local function spawnBike(startCF, endCF, jumpCF)
     bikeSfx.Parent = bike.PrimaryPart
     bikeSfx:Play()
 
-    local dist     = math.abs(endCF.Z - startCF.Z)
+    local dist    = math.abs(endCF.Z - startCF.Z)
     local duration = dist / BIKE_SPEED
     local elapsed  = 0
     local conn
@@ -63,27 +66,15 @@ local function spawnBike(startCF, endCF, jumpCF)
     end))
 end
 
-local function fireLanes()
-    local rot = CFrame.Angles(0, math.rad(180), 0)
-    for _, lane in DEFAULT_LANES do
-        local startCF = CFrame.new(lane.x, lane.baseY, PATH_START_Z) * rot
-        local endCF   = CFrame.new(lane.x, lane.baseY, PATH_END_Z)   * rot
-        spawnBike(startCF, endCF, nil)
-    end
-end
-
--- wait 3s like the server does then fire bikes
-task.delay(3, fireLanes)
-
--- chicletera spray observer — mirrors ForceSpray attribute exactly
-managedObj:Add(Observers.observeTag("Event_ChicleteiraBicicleteira", function(chicletera)
+-- ── standing chicletera ────────────────────────────────────────────────────
+local function spawnStanding(lane)
     local addObj = Trove.new()
-    local pivot  = chicletera:GetPivot() * CFrame.fromOrientation(0, math.pi, 0)
+    local pivot  = CFrame.new(lane.x, lane.baseY, 0) * CFrame.fromOrientation(0, math.pi, 0)
 
-    local model  = addObj:Clone(EventScript["Standing Chicleteira Bicicleteira"])
-    local Y      = model:GetExtentsSize().Y
+    local model = addObj:Clone(EventScript["Standing Chicleteira Bicicleteira"])
+    local Y     = model:GetExtentsSize().Y
     model:PivotTo(pivot - Vector3.new(0, Y, 0))
-    model.Parent = chicletera
+    model.Parent = workspace
 
     local Animator = model.AnimationController.Animator
 
@@ -106,25 +97,11 @@ managedObj:Add(Observers.observeTag("Event_ChicleteiraBicicleteira", function(ch
         end
     end))
 
-    addObj:Add(chicletera:GetAttributeChangedSignal("ForceSpray"):Connect(function()
-        if chicletera:GetAttribute("ForceSpray") then
-            task.spawn(function()
-                SoundController:PlaySound(Sounds.Spray, pivot.Position)
-            end)
-            paintAnim:Stop(0)
-            paintAnim:Play()
-            task.wait(0.3)
-            VFX.enable(model.Handle.vfx)
-            task.wait(1)
-            VFX.disable(model.Handle.vfx)
-        end
-    end))
-
-    -- face target animal when spraying
+    -- ForceSpray watch — server sets this attribute on the chicletera part
     addObj:Add(task.spawn(function()
-        while chicletera.Parent and ReplicatedStorage:GetAttribute("ChicleteiraBicicleteiraEvent") do
+        while model.Parent and ReplicatedStorage:GetAttribute("ChicleteiraBicicleteiraEvent") do
             task.wait(0.1)
-            local target = chicletera:GetAttribute("ForceSpray")
+            local target    = model:GetAttribute("ForceSpray")
             local targetPos = target and ClientEventUtils.getAnimalPosition(target)
             if targetPos then
                 local flat = Vector3.new(targetPos.X, pivot.Y, targetPos.Z)
@@ -137,11 +114,44 @@ managedObj:Add(Observers.observeTag("Event_ChicleteiraBicicleteira", function(ch
         end
     end))
 
+    addObj:Add(model:GetAttributeChangedSignal("ForceSpray"):Connect(function()
+        if model:GetAttribute("ForceSpray") then
+            task.spawn(function()
+                SoundController:PlaySound(Sounds.Spray, pivot.Position)
+            end)
+            paintAnim:Stop(0)
+            paintAnim:Play()
+            task.wait(0.3)
+            VFX.enable(model.Handle.vfx)
+            task.wait(1)
+            VFX.disable(model.Handle.vfx)
+        end
+    end))
+
     SoundController:PlaySound(Sounds.Ground, pivot.Position)
+    managedObj:Add(addObj)
+end
 
-    return addObj:WrapClean()
-end, { workspace }))
+-- ── fire bikes then drop standing models ──────────────────────────────────
+task.delay(3, function()
+    if not ReplicatedStorage:GetAttribute("ChicleteiraBicicleteiraEvent") then return end
 
+    local rot = CFrame.Angles(0, math.rad(180), 0)
+    for _, lane in DEFAULT_LANES do
+        local startCF = CFrame.new(lane.x, lane.baseY, PATH_START_Z) * rot
+        local endCF   = CFrame.new(lane.x, lane.baseY, PATH_END_Z)   * rot
+        spawnBike(startCF, endCF, nil)
+    end
+end)
+
+task.delay(3 + TRAVEL_TIME, function()
+    if not ReplicatedStorage:GetAttribute("ChicleteiraBicicleteiraEvent") then return end
+    for _, lane in DEFAULT_LANES do
+        spawnStanding(lane)
+    end
+end)
+
+-- ── cleanup ────────────────────────────────────────────────────────────────
 task.spawn(function()
     while ReplicatedStorage:GetAttribute("ChicleteiraBicicleteiraEvent") do task.wait(1) end
     managedObj:Destroy()
