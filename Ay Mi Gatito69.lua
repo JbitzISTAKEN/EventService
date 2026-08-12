@@ -13,9 +13,8 @@ local EVENT_NAME     = "Ay Mi Gatito"
 local TAG_NAME       = "Gatito"
 local BLOCKING_TRAIT = ":3"
 
--- Asset paths pulled exactly like Bombardiro/Sammyni — straight from EventController.Events
-local EventAssets   = ReplicatedStorage.Controllers.EventController.Events[EVENT_NAME]
-local GatitoAssets  = EventAssets.Gatitos
+local EventAssets  = ReplicatedStorage.Controllers.EventController.Events[EVENT_NAME]
+local GatitoAssets = EventAssets.Gatitos
 
 local VARIANTS = {
     GatitoAssets:WaitForChild("Gatito"),
@@ -23,8 +22,8 @@ local VARIANTS = {
     GatitoAssets:WaitForChild("Crying Gatito"),
 }
 
--- Wander parts live in workspace.Events["Ay Mi Gatito"] — same pattern as Sammyni's WANDER_FOLDER
-local WANDER_FOLDER = workspace:WaitForChild("Events"):WaitForChild("Ay Mi Gatito")
+-- Same Wander folder Sammyni uses
+local WANDER_FOLDER = workspace:WaitForChild("Events"):WaitForChild("Wander")
 
 local GATITOS_PER_WANDER = 3
 local WANDER_SPEED       = 16
@@ -93,32 +92,29 @@ end
 -- ─── Model ────────────────────────────────────────────────────────────────────
 
 local function createGatito(position: Vector3): Model
-    -- Clone the variant, pivot to ground position, parent to workspace
-    -- Mirrors exactly how Sammyni does createSpider and Bombardiro does spawnPlane
     local template = VARIANTS[variantIndex]
     variantIndex   = variantIndex % #VARIANTS + 1
 
+    -- Clone straight from EventController.Events path, parent to workspace
     local model = template:Clone()
     model.Name  = "Gatito"
 
-    -- Find or promote a root part
     local root = model:FindFirstChild("HumanoidRootPart")
         or model.PrimaryPart
         or model:FindFirstChildWhichIsA("BasePart")
 
     if not root then
-        root          = Instance.new("Part")
-        root.Name     = "HumanoidRootPart"
-        root.Size     = Vector3.new(2, 2, 2)
-        root.Parent   = model
+        root        = Instance.new("Part")
+        root.Name   = "HumanoidRootPart"
+        root.Size   = Vector3.new(2, 2, 2)
+        root.Parent = model
     end
 
-    root.Anchored     = true
-    root.CanCollide   = false
-    root.CanQuery     = false
-    root.CanTouch     = false
-    root.Transparency = root.Transparency  -- keep whatever the asset has
-    root.CFrame       = CFrame.new(stickToGround(position))
+    root.Anchored   = true
+    root.CanCollide = false
+    root.CanQuery   = false
+    root.CanTouch   = false
+    root.CFrame     = CFrame.new(stickToGround(position))
     model.PrimaryPart = root
 
     model:SetAttribute("Dance",     true)
@@ -127,7 +123,7 @@ local function createGatito(position: Vector3): Model
 
     CollectionService:AddTag(model, TAG_NAME)
 
-    model.Parent = workspace  -- parent to workspace exactly like Sammyni
+    model.Parent = workspace
     return model
 end
 
@@ -192,11 +188,7 @@ local function followAndAttackAnimal(gatitoData, targetAnimal)
             CHASE_SPEED,
             CHASE_REACH_DIST,
             30,
-            {
-                shouldStop = function()
-                    return (not isActive) or (not gatito.Parent)
-                end,
-            }
+            { shouldStop = function() return (not isActive) or (not gatito.Parent) end }
         )
 
         gatito:SetAttribute("IsRunning", false)
@@ -209,25 +201,22 @@ local function followAndAttackAnimal(gatitoData, targetAnimal)
             attackConn = chaseTrove:Add(RunService.Heartbeat:Connect(function(dt)
                 elapsed += dt
                 if elapsed >= ATTACK_DURATION
-                    or (not isActive)
-                    or (not targetAnimal) or (not targetAnimal.Parent) or (not targetAnimal.PrimaryPart)
+                    or not isActive
+                    or not targetAnimal or not targetAnimal.Parent or not targetAnimal.PrimaryPart
                 then
                     chaseTrove:Remove(attackConn)
                     attackConn:Disconnect()
                     return
                 end
-
                 local tPos = targetAnimal.PrimaryPart.Position
                 local mPos = gatito.PrimaryPart.Position
                 local d    = tPos - mPos
-                local dist = d.Magnitude
-                if dist > CHASE_STICK_DIST then
+                if d.Magnitude > CHASE_STICK_DIST then
                     local dir     = d.Unit
                     local flatDir = Vector3.new(dir.X, 0, dir.Z)
                     if flatDir.Magnitude < 1e-4 then return end
-                    flatDir = flatDir.Unit
-                    local newPos = stickToGround(mPos + dir * math.min(CHASE_SPEED * dt, dist))
-                    gatito:PivotTo(CFrame.new(newPos, newPos + flatDir))
+                    local newPos = stickToGround(mPos + dir * math.min(CHASE_SPEED * dt, d.Magnitude))
+                    gatito:PivotTo(CFrame.new(newPos, newPos + flatDir.Unit))
                 end
             end))
 
@@ -264,8 +253,7 @@ end
 local function spawnGatito(homePart: BasePart)
     if not isActive or not homePart then return end
 
-    local pos         = randomPointInPart(homePart)
-    local model       = createGatito(pos)
+    local model       = createGatito(randomPointInPart(homePart))
     local gatitoTrove = eventTrove:Extend()
     gatitoTrove:Add(model)
 
@@ -274,7 +262,6 @@ local function spawnGatito(homePart: BasePart)
         Home  = homePart,
         Trove = gatitoTrove,
     }
-
     table.insert(spawnedEntities, data)
     return data
 end
@@ -282,11 +269,11 @@ end
 -- ─── Main ─────────────────────────────────────────────────────────────────────
 
 local function main()
-    -- Spawn exactly like Sammyni: iterate wander parts, spawn N per part
     local wanderParts = getWanderParts()
 
     if #wanderParts == 0 then
-        warn("[AyMiGatito] No wander parts found under", WANDER_FOLDER:GetFullName())
+        warn("[AyMiGatito] No BaseParts found in", WANDER_FOLDER:GetFullName())
+        return
     end
 
     for _, part in ipairs(wanderParts) do
