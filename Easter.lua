@@ -1,27 +1,29 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 local HttpService       = game:GetService("HttpService")
-local TweenService      = game:GetService("TweenService")
 local RunService        = game:GetService("RunService")
 
-local VFX           = require(ReplicatedStorage.Shared.VFX)
+local VFX             = require(ReplicatedStorage.Shared.VFX)
 local SoundController = require(ReplicatedStorage.Controllers.SoundController)
-local ClientEventUtils = require(ReplicatedStorage.Controllers.EventController.ClientEventUtils)
 
-local Sounds     = ReplicatedStorage.Sounds.Events.Easter
-local EventAssets = ReplicatedStorage.Controllers.EventController.Events.Easter
-
-local TRAIT_NAME      = "Bunny Ears"
-local HOP_SPEED       = 18
-local COIN_FLIGHT_TIME = 1.2
-local COIN_WAVE_MIN   = 3
-local COIN_WAVE_MAX   = 6
-local COIN_LOOP_MIN   = 5
-local COIN_LOOP_MAX   = 9
+local TRAIT_NAME         = "Bunny Ears"
+local HOP_SPEED          = 18
+local COIN_FLIGHT_TIME   = 1.2
+local COIN_WAVE_MIN      = 3
+local COIN_WAVE_MAX      = 6
+local COIN_LOOP_MIN      = 5
+local COIN_LOOP_MAX      = 9
 local COIN_INITIAL_DELAY = 5
-local COIN_LIFETIME   = 30
-local TOTAL_BUNNIES   = math.random(6, 10)
-local FALLOFF_RADIUS  = 40
+local COIN_LIFETIME      = 30
+local TOTAL_BUNNIES      = math.random(6, 10)
+local FALLOFF_RADIUS     = 40
+
+-- wait for event to actually be active before touching any assets
+repeat task.wait() until ReplicatedStorage:GetAttribute("EasterEvent")
+
+-- paths confirmed from your explorer: EventController.Events.Easter
+local EventAssets = ReplicatedStorage.Controllers.EventController.Events.Easter
+local Sounds      = ReplicatedStorage.Sounds.Events.Easter
 
 local WANDER_FOLDER = workspace:FindFirstChild("Events")
     and workspace.Events:FindFirstChild("Wander")
@@ -30,13 +32,13 @@ local RayParams = RaycastParams.new()
 RayParams.FilterType = Enum.RaycastFilterType.Include
 RayParams.FilterDescendantsInstances = {
     workspace:WaitForChild("Map"),
-    workspace:FindFirstChild("Terrain") or workspace.Terrain,
+    workspace.Terrain,
 }
 
-local running       = true
+local running        = true
 local spawnedBunnies = {}
-local activeCoins   = {}
-local coinCounter   = 0
+local activeCoins    = {}
+local coinCounter    = 0
 
 -- ── utils ──────────────────────────────────────────────────────────────────
 local function stickToGround(pos)
@@ -59,7 +61,7 @@ local function hasTrait(animal)
     return false
 end
 
--- ── bunny visuals (client-side model) ─────────────────────────────────────
+-- ── bunny visuals ──────────────────────────────────────────────────────────
 local function spawnBunnyVisual(pos)
     local model = EventAssets.Bunny:Clone()
     model:PivotTo(CFrame.new(pos))
@@ -69,13 +71,9 @@ end
 
 local function wanderBunny(bunnyData)
     if bunnyData.busy or not bunnyData.model.Parent then return end
-    local home = bunnyData.home
-    local size = home.Size
-    local offset = Vector3.new(
-        (math.random() - 0.5) * size.X,
-        0,
-        (math.random() - 0.5) * size.Z
-    )
+    local home   = bunnyData.home
+    local size   = home.Size
+    local offset = Vector3.new((math.random()-0.5)*size.X, 0, (math.random()-0.5)*size.Z)
     local target = stickToGround(home.Position + offset)
     local start  = bunnyData.model:GetPivot().Position
     local dist   = (target - start).Magnitude
@@ -90,9 +88,8 @@ local function wanderBunny(bunnyData)
         while elapsed < duration and running and bunnyData.model.Parent and not bunnyData.busy do
             local dt = task.wait()
             elapsed += dt
-            local alpha = math.clamp(elapsed / duration, 0, 1)
-            local pos2 = stickToGround(start:Lerp(target, alpha))
-            bunnyData.model:PivotTo(CFrame.new(pos2, pos2 + dir))
+            local p = stickToGround(start:Lerp(target, math.clamp(elapsed/duration, 0, 1)))
+            bunnyData.model:PivotTo(CFrame.new(p, p + dir))
         end
         if bunnyData.model and bunnyData.model.Parent then
             bunnyData.model:SetAttribute("Moving", false)
@@ -125,15 +122,16 @@ local function doBunnyJump(bunnyData, targetAnimal)
 
         if reached and targetAnimal and targetAnimal.Parent then
             bunnyData.model:SetAttribute("Jumping", true)
-            -- burst VFX + sound on the animal
-            local burst = EventAssets.Burst:Clone()
-            burst.CFrame = CFrame.new(targetAnimal.PrimaryPart.Position)
-            burst.Parent = workspace
-            VFX.emit(burst)
+            local burst = EventAssets:FindFirstChild("Burst") and EventAssets.Burst:Clone()
+            if burst then
+                burst.CFrame = CFrame.new(targetAnimal.PrimaryPart.Position)
+                burst.Parent = workspace
+                VFX.emit(burst)
+                task.delay(3, function() burst:Destroy() end)
+            end
             if Sounds:FindFirstChild("BurstSound") then
                 SoundController:PlaySound(Sounds.BurstSound, targetAnimal.PrimaryPart.Position)
             end
-            task.delay(3, function() burst:Destroy() end)
             task.wait(1.4)
             bunnyData.model:SetAttribute("Jumping", false)
         end
@@ -142,51 +140,13 @@ local function doBunnyJump(bunnyData, targetAnimal)
     end)
 end
 
--- ── coin visuals ───────────────────────────────────────────────────────────
-local function spawnCoinVisual(coinId, origin, landPos)
-    local coin = EventAssets.BunnyCoin:Clone()
-    coin.CFrame = CFrame.new(origin)
-    coin.Parent = workspace
-
-    -- arc flight
-    local elapsed = 0
-    local conn
-    conn = RunService.PostSimulation:Connect(function(dt)
-        elapsed += dt
-        local t = math.clamp(elapsed / COIN_FLIGHT_TIME, 0, 1)
-        local mid = (origin + landPos) / 2 + Vector3.new(0, 15, 0)
-        local pos = origin:Lerp(mid, t):Lerp(landPos, t) -- simple quadratic approximation
-        coin.CFrame = CFrame.new(pos)
-        if t >= 1 then
-            conn:Disconnect()
-            -- idle bob
-            local bobElapsed = 0
-            local bobConn
-            bobConn = RunService.PostSimulation:Connect(function(dt2)
-                bobElapsed += dt2
-                coin.CFrame = CFrame.new(landPos + Vector3.new(0, math.sin(bobElapsed * 3) * 0.3, 0))
-                    * CFrame.Angles(0, bobElapsed, 0)
-                if not activeCoins[coinId] then
-                    VFX.disable(coin)
-                    task.delay(0.5, function() coin:Destroy() end)
-                    bobConn:Disconnect()
-                end
-            end)
-        end
-    end)
-
-    if Sounds:FindFirstChild("CoinSpawn") then
-        SoundController:PlaySound(Sounds.CoinSpawn, landPos)
-    end
-
-    activeCoins[coinId] = { coin = coin, landPos = landPos }
-end
-
+-- ── coins ──────────────────────────────────────────────────────────────────
 local function spawnCoinWave(count)
-    local wanderParts = WANDER_FOLDER and WANDER_FOLDER:GetDescendants() or {}
     local baseParts = {}
-    for _, p in ipairs(wanderParts) do
-        if p:IsA("BasePart") then table.insert(baseParts, p) end
+    if WANDER_FOLDER then
+        for _, p in ipairs(WANDER_FOLDER:GetDescendants()) do
+            if p:IsA("BasePart") then table.insert(baseParts, p) end
+        end
     end
 
     for _ = 1, count do
@@ -195,35 +155,59 @@ local function spawnCoinWave(count)
 
         local origin, landPos
         if #baseParts > 0 then
-            local part   = baseParts[math.random(1, #baseParts)]
-            local size   = part.Size
-            local ox     = (math.random() - 0.5) * size.X
-            local oz     = (math.random() - 0.5) * size.Z
-            local topFace = part.CFrame:PointToWorldSpace(Vector3.new(ox, size.Y / 2, oz))
-            local hit     = workspace:Raycast(topFace + Vector3.new(0, 10, 0), Vector3.new(0, -30, 0), RaycastParams.new())
-            landPos  = hit and hit.Position or topFace
-            origin   = part.Position + Vector3.new(0, 4, 0)
+            local part    = baseParts[math.random(1, #baseParts)]
+            local size    = part.Size
+            local topFace = part.CFrame:PointToWorldSpace(Vector3.new((math.random()-0.5)*size.X, size.Y/2, (math.random()-0.5)*size.Z))
+            local hit     = workspace:Raycast(topFace + Vector3.new(0,10,0), Vector3.new(0,-30,0), RaycastParams.new())
+            landPos = hit and hit.Position or topFace
+            origin  = part.Position + Vector3.new(0, 4, 0)
         else
-            local angle  = math.random() * math.pi * 2
-            local r      = math.random(15, FALLOFF_RADIUS)
-            origin   = Vector3.new(0, 5, 0)
-            local scatter = Vector3.new(math.cos(angle) * r, 20, math.sin(angle) * r)
-            local hit     = workspace:Raycast(scatter, Vector3.new(0, -40, 0), RaycastParams.new())
-            landPos  = hit and hit.Position or (scatter - Vector3.new(0, 20, 0))
+            local angle   = math.random() * math.pi * 2
+            local r       = math.random(15, FALLOFF_RADIUS)
+            origin        = Vector3.new(0, 5, 0)
+            local scatter = Vector3.new(math.cos(angle)*r, 20, math.sin(angle)*r)
+            local hit     = workspace:Raycast(scatter, Vector3.new(0,-40,0), RaycastParams.new())
+            landPos = hit and hit.Position or (scatter - Vector3.new(0,20,0))
         end
 
-        spawnCoinVisual(coinId, origin, landPos)
+        -- visual coin
+        if EventAssets:FindFirstChild("BunnyCoin") then
+            local coin    = EventAssets.BunnyCoin:Clone()
+            coin.CFrame   = CFrame.new(origin)
+            coin.Parent   = workspace
+            local elapsed = 0
+            local conn
+            conn = RunService.PostSimulation:Connect(function(dt)
+                elapsed += dt
+                local t   = math.clamp(elapsed / COIN_FLIGHT_TIME, 0, 1)
+                local mid = (origin + landPos)/2 + Vector3.new(0, 15, 0)
+                coin.CFrame = CFrame.new(Vector3.new(
+                    origin.X + (landPos.X - origin.X) * t,
+                    origin.Y + (mid.Y - origin.Y) * math.sin(t * math.pi),
+                    origin.Z + (landPos.Z - origin.Z) * t
+                ))
+                if t >= 1 then
+                    conn:Disconnect()
+                    local bob = 0
+                    local bobConn
+                    bobConn = RunService.PostSimulation:Connect(function(dt2)
+                        bob += dt2
+                        coin.CFrame = CFrame.new(landPos + Vector3.new(0, math.sin(bob*3)*0.3, 0)) * CFrame.Angles(0, bob, 0)
+                        if not activeCoins[coinId] then
+                            task.delay(0.3, function() coin:Destroy() end)
+                            bobConn:Disconnect()
+                        end
+                    end)
+                end
+            end)
+            activeCoins[coinId] = true
+        end
 
-        -- auto-expire
-        task.delay(COIN_LIFETIME, function()
-            activeCoins[coinId] = nil
-        end)
+        task.delay(COIN_LIFETIME, function() activeCoins[coinId] = nil end)
     end
 end
 
--- ── main loops ─────────────────────────────────────────────────────────────
-
--- spawn bunnies
+-- ── spawn bunnies ──────────────────────────────────────────────────────────
 for _ = 1, TOTAL_BUNNIES do
     local home = getRandomWanderPart()
     if home then
@@ -235,22 +219,18 @@ for _ = 1, TOTAL_BUNNIES do
     end
 end
 
--- wander loop
+-- ── loops ──────────────────────────────────────────────────────────────────
 task.spawn(function()
     while running do
         for _, b in ipairs(spawnedBunnies) do
             if b.model and b.model.Parent and not b.busy
-                and not b.model:GetAttribute("Moving")
-                and math.random() > 0.35
-            then
-                wanderBunny(b)
-            end
+                and not b.model:GetAttribute("Moving") and math.random() > 0.35
+            then wanderBunny(b) end
         end
         task.wait(2.5)
     end
 end)
 
--- trait-chase loop — reads animal positions client side via ClientEventUtils
 task.spawn(function()
     while running do
         task.wait(math.random(6, 10))
@@ -261,41 +241,30 @@ task.spawn(function()
             end
         end
         if #candidates == 0 then continue end
-
         local free = {}
         for _, b in ipairs(spawnedBunnies) do
-            if not b.busy and b.model and b.model.Parent then
-                table.insert(free, b)
-            end
+            if not b.busy and b.model and b.model.Parent then table.insert(free, b) end
         end
         if #free == 0 then continue end
-
-        doBunnyJump(
-            free[math.random(1, #free)],
-            candidates[math.random(1, #candidates)]
-        )
+        doBunnyJump(free[math.random(1,#free)], candidates[math.random(1,#candidates)])
     end
 end)
 
--- coin wave loop
 task.spawn(function()
     task.wait(COIN_INITIAL_DELAY)
     while running do
         spawnCoinWave(math.random(COIN_WAVE_MIN, COIN_WAVE_MAX))
-        task.wait(math.random(COIN_LOOP_MIN * 100, COIN_LOOP_MAX * 100) / 100)
+        task.wait(math.random(COIN_LOOP_MIN*100, COIN_LOOP_MAX*100) / 100)
     end
 end)
 
--- stop when attribute clears
+-- ── cleanup ────────────────────────────────────────────────────────────────
 task.spawn(function()
     while ReplicatedStorage:GetAttribute("EasterEvent") do task.wait(1) end
     running = false
     for _, b in ipairs(spawnedBunnies) do
         if b.model and b.model.Parent then b.model:Destroy() end
     end
-    for _, c in pairs(activeCoins) do
-        if c.coin and c.coin.Parent then c.coin:Destroy() end
-    end
-    spawnedBunnies = {}
     activeCoins    = {}
+    spawnedBunnies = {}
 end)
