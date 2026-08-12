@@ -19,7 +19,7 @@ local TOTAL_BUNNIES      = math.random(6, 10)
 local FALLOFF_RADIUS     = 40
 
 -- wait for event to actually be active before touching any assets
-repeat task.wait() until ReplicatedStorage:GetAttribute("EasterEvent")
+repeat task.wait() until ReplicatedStorage:GetAttribute("EasterEventSeed")
 
 -- paths confirmed from your explorer: EventController.Events.Easter
 local EventAssets = ReplicatedStorage.Controllers.EventController.Events.Easter
