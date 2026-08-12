@@ -165,7 +165,6 @@ local function createSpider(position: Vector3): Model
 
 	CollectionService:AddTag(model, TAG_NAME)
 
-	-- visual model welded to root — mirrors client observer exactly
 	local visual = EventAssets["Sammyni Spyderini"]:Clone()
 	local weld   = Instance.new("Weld")
 	weld.Part0   = visual.PrimaryPart
@@ -174,12 +173,11 @@ local function createSpider(position: Vector3): Model
 	weld.Parent  = visual.PrimaryPart
 	visual.Parent = model
 
-	-- animator
 	local animController = visual:FindFirstChildOfClass("AnimationController")
 	local animator = animController and animController:FindFirstChildOfClass("Animator")
 
 	local idle, walk, attack, ground, initialGround, jump
-	local flag = nil -- mirrors `flag` in original observer
+	local flag = nil
 
 	if animator then
 		local function loadAnim(name)
@@ -193,9 +191,13 @@ local function createSpider(position: Vector3): Model
 		initialGround = loadAnim("InitialGround")
 		jump          = loadAnim("Jump")
 
-		if idle   then idle.Priority = Enum.AnimationPriority.Idle     idle:Play() end
-		if walk   then walk.Priority = Enum.AnimationPriority.Movement end
-
+		if idle then
+			idle.Priority = Enum.AnimationPriority.Idle
+			idle:Play()
+		end
+		if walk then
+			walk.Priority = Enum.AnimationPriority.Movement
+		end
 		if ground then
 			ground.Looped = true
 			ground:GetMarkerReachedSignal("Freeze"):Connect(function()
@@ -221,14 +223,14 @@ local function createSpider(position: Vector3): Model
 		elseif model:GetAttribute("Ground") then
 			SoundController:PlaySound(Sounds:FindFirstChild("EnterHole"), root.Position, false)
 			createHole(root.Position, 1.5)
-			if ground and not ground.IsPlaying then
-				if flag then
-					ground.TimePosition = 0.6
+			if ground then
+				if ground.IsPlaying then
+					flag = false
+					return
 				end
+				if flag then ground.TimePosition = 0.6 end
 				ground:Play(flag and 0 or nil)
-				if flag then
-					ground.TimePosition = 0.6
-				end
+				if flag then ground.TimePosition = 0.6 end
 			end
 			flag = false
 		else
@@ -241,7 +243,6 @@ local function createSpider(position: Vector3): Model
 		end
 	end
 
-	-- deferred initial state check — mirrors original
 	task.defer(function()
 		if model:GetAttribute("IsRunning") and walk then walk:Play() end
 	end)
@@ -250,14 +251,16 @@ local function createSpider(position: Vector3): Model
 		if not walk then return end
 		if model:GetAttribute("IsRunning") then walk:Play() else walk:Stop() end
 	end)
+
+	-- matches controller exactly: only Play on true, no Stop on false
 	model:GetAttributeChangedSignal("AttackAnimation"):Connect(function()
 		if not attack then return end
-		if model:GetAttribute("AttackAnimation") then attack:Play() else attack:Stop() end
+		if model:GetAttribute("AttackAnimation") then attack:Play() end
 	end)
+
 	model:GetAttributeChangedSignal("Ground"):Connect(updateGround)
 	model:GetAttributeChangedSignal("InitialGround"):Connect(updateGround)
 
-	-- initial ground state
 	if model:GetAttribute("Ground") and ground and not ground.IsPlaying then
 		ground.TimePosition = 0.6
 		ground:Play(0)
@@ -273,7 +276,7 @@ end
 
 -- ─── Behavior ─────────────────────────────────────────────────────────────────
 
-local spawnAndEmergeSpider -- forward decl
+local spawnAndEmergeSpider
 local retireSpider
 
 local function startBehavior(spider, stateName, behaviorFn)
@@ -307,21 +310,21 @@ retireSpider = function(spider)
 		model:SetAttribute("Ground",    true)
 	end
 
-	task.delay(HOLE_EXIT_WAIT, function()
+	-- tracked in spider.Trove so eventTrove:Destroy() cancels it before it fires
+	spider.Trove:Add(task.delay(HOLE_EXIT_WAIT, function()
 		local wasAttack     = spider.IsAttack
 		local wasWanderPart = spider.WanderPart
 
 		removeFromList(spider)
 		spider.State = "Dead"
 
-		-- clean via eventTrove:Remove exactly like server
 		eventTrove:Remove(spider.Trove)
 
 		if isActive and not wasAttack then
 			local wp = (wasWanderPart and wasWanderPart.Parent) and wasWanderPart or getRandomWanderPart()
 			if wp then spawnAndEmergeSpider(wp) end
 		end
-	end)
+	end))
 end
 
 local function doWander(spider)
@@ -495,7 +498,7 @@ local function spawnAttackSpider(target: Model)
 	return spider
 end
 
--- ─── Main — mirrors server OnStart exactly ────────────────────────────────────
+-- ─── Main ─────────────────────────────────────────────────────────────────────
 
 local function main()
 	task.wait(ACTIVATION_DELAY)
@@ -506,7 +509,6 @@ local function main()
 		if wp then spawnAndEmergeSpider(wp) end
 	end
 
-	-- wander tick
 	eventTrove:Add(task.spawn(function()
 		while isActive do
 			task.wait(0.25)
@@ -530,14 +532,13 @@ local function main()
 		end
 	end))
 
-	-- attack tick
 	eventTrove:Add(task.spawn(function()
 		while isActive do
 			task.wait(math.random(ATTACK_COOLDOWN_MIN, ATTACK_COOLDOWN_MAX))
 			if not isActive then break end
 			if activeAttackCount >= MAX_SIMULTANEOUS_ATTACKS then continue end
 
-			local now = workspace:GetServerTimeNow()
+			local now = os.clock()
 			for name, last in pairs(recentlyTargeted) do
 				if now - last > RECENT_TARGET_COOLDOWN then recentlyTargeted[name] = nil end
 			end
