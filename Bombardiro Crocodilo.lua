@@ -49,10 +49,6 @@ local lastTraitApplied = os.clock()
 
 local WanderFolder = workspace:WaitForChild("Events"):WaitForChild("Wander")
 
-trove:Add(function()
-	EffectController:Activate("Blink")
-end)
-
 -- ─── Helpers ──────────────────────────────────────────────────────────────────
 
 local function shakeCameraBasedOnProximity(pos)
