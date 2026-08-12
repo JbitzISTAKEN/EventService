@@ -44,6 +44,10 @@ trove:Add(v22)
 
 Sounds.Appear:Play()
 
+trove:Add(function()
+	EffectController:Activate("Blink")
+end)
+
 local function shakeCameraBasedOnProximity(pos)
 	local mag = (workspace.CurrentCamera.CFrame.Position - pos).Magnitude
 	if mag > 300 then return end
@@ -252,7 +256,12 @@ local function loop()
 	if gate > 0 then task.wait(gate) end
 
 	while EventController:GetActiveEventData("Mygame43") do
-		task.wait()
+		local wait = Random.new():NextNumber(2, 4)
+		local t0   = os.clock()
+		while os.clock() - t0 < wait do
+			task.wait()
+			if not EventController:GetActiveEventData("Mygame43") then break end
+		end
 		if not EventController:GetActiveEventData("Mygame43") then break end
 
 		local numBalls = math.random(1, 2)
@@ -266,7 +275,13 @@ local function loop()
 				fireOrb(seed, orbIndex, targetPos, flightDuration, didHit)
 			end
 
-			if i < numBalls then task.wait(0.5) end
+			if i < numBalls then
+				local t1 = os.clock()
+				while os.clock() - t1 < 0.5 do
+					task.wait()
+					if not EventController:GetActiveEventData("Mygame43") then break end
+				end
+			end
 		end
 	end
 
