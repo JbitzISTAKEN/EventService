@@ -24,10 +24,7 @@ local VARIANTS = {
 
 local WANDER_FOLDER = workspace:WaitForChild("Events"):WaitForChild("Wander")
 
--- 7 seconds matches the AyMiGatito client activation delay exactly —
--- blink, map VFX, and music all fire at startedAt + 7
 local ACTIVATION_DELAY   = 7
-
 local GATITOS_PER_WANDER = 3
 local WANDER_SPEED       = 16
 local CHASE_SPEED        = 20
@@ -41,8 +38,8 @@ local ATTACK_LOOP_MAX    = 10
 
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
 
-local eventData   = EventController:GetActiveEventData(EVENT_NAME)
-local startedAt   = eventData.startedAt
+local eventData  = EventController:GetActiveEventData(EVENT_NAME)
+local startedAt  = eventData.startedAt
 
 local eventTrove      = Trove.new()
 local spawnedEntities = {}
@@ -98,17 +95,29 @@ local function createGatito(position: Vector3): Model
     local model = template:Clone()
     model.Name  = "Gatito"
 
-    -- The cloned model already has the full mesh + AnimationController inside.
-    -- We just need a proper HumanoidRootPart as PrimaryPart for PivotTo to work.
-    local root = model:FindFirstChild("HumanoidRootPart")
-        or model.PrimaryPart
-        or model:FindFirstChildWhichIsA("BasePart")
+    -- The client observer does model:WaitForChild("HumanoidRootPart") at line 319.
+    -- The cloned asset's root part has a different name, so we inject a proper
+    -- invisible HumanoidRootPart that the observer finds immediately.
+    local existingRoot = model:FindFirstChild("HumanoidRootPart")
 
-    if not root then
-        root        = Instance.new("Part")
-        root.Name   = "HumanoidRootPart"
-        root.Size   = Vector3.new(2, 2, 2)
-        root.Parent = model
+    local root
+    if existingRoot and existingRoot:IsA("BasePart") then
+        root = existingRoot
+    else
+        -- Rename whatever the asset calls its primary part, or make a new one
+        local assetRoot = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
+        if assetRoot then
+            -- Don't rename the visual mesh root — make a dedicated invisible one
+        end
+        root          = Instance.new("Part")
+        root.Name     = "HumanoidRootPart"
+        root.Size     = Vector3.new(2, 2, 2)
+        root.Transparency = 1
+        root.Anchored   = true
+        root.CanCollide = false
+        root.CanQuery   = false
+        root.CanTouch   = false
+        root.Parent     = model
     end
 
     root.Anchored   = true
@@ -118,19 +127,15 @@ local function createGatito(position: Vector3): Model
     root.CFrame     = CFrame.new(stickToGround(position))
     model.PrimaryPart = root
 
-    -- These attributes are what the AyMiGatito client observer reads to
-    -- switch between Dance, Walk, and Idle animations — set them before
-    -- parenting so the observer picks them up on the first frame.
     model:SetAttribute("Dance",          true)
     model:SetAttribute("IsRunning",      false)
     model:SetAttribute("IsChasing",      false)
     model:SetAttribute("AttackAnimation",false)
 
-    -- Tag fires Observers.observeTag("Gatito") in the client LocalScript,
-    -- which clones the visual mesh onto the model and wires all animations.
-    CollectionService:AddTag(model, TAG_NAME)
-
+    -- Parent BEFORE tagging so the model is in workspace when the observer fires
     model.Parent = workspace
+
+    CollectionService:AddTag(model, TAG_NAME)
     return model
 end
 
@@ -276,8 +281,6 @@ end
 -- ─── Main ─────────────────────────────────────────────────────────────────────
 
 local function main()
-    -- Wait until startedAt + 7 — same window the client fires blink + map VFX.
-    -- If we're already past it (late join), skip the wait entirely.
     local timeUntilActivation = (startedAt + ACTIVATION_DELAY) - workspace:GetServerTimeNow()
     if timeUntilActivation > 0 then
         task.wait(timeUntilActivation)
