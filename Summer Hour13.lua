@@ -40,6 +40,12 @@ local idleTrack: AnimationTrack? = nil
 
 -- ─── Helpers ──────────────────────────────────────────────────────────────────
 
+local function getAnimalTop(animal: Instance): Vector3?
+	local primary = animal.PrimaryPart
+	if not primary then return nil end
+	return primary.Position + Vector3.new(0, animal:GetExtentsSize().Y / 2, 0)
+end
+
 local function decodeTraits(animal: Instance): {string}
 	local raw = animal:GetAttribute("Traits")
 	if not raw then return {} end
@@ -94,9 +100,9 @@ local function fireProjectile(animal: Instance): number
 		return 0
 	end
 
-	local animalPos = ClientEventUtils.getAnimalPosition(animal, { top = true })
-	if animalPos == Vector3.new(0, 0, 0) then
-		warn("[SummerHour] getAnimalPosition returned zero")
+	local animalPos = getAnimalTop(animal)
+	if not animalPos then
+		warn("[SummerHour] Could not resolve animal position")
 		return 0
 	end
 
@@ -133,8 +139,8 @@ local function fireProjectile(animal: Instance): number
 	print(string.format("[SummerHour] Firing at %s — %.1f studs / %.2fs travel", animal.Name, (animalPos - startPos).Magnitude, travelTime))
 
 	conn = RunService.PostSimulation:Connect(function()
-		local cur = ClientEventUtils.getAnimalPosition(animal, { top = true })
-		if cur ~= Vector3.new(0, 0, 0) then lastTarget = cur end
+		local cur = getAnimalTop(animal)
+		if cur then lastTarget = cur end
 
 		local t = TweenService:GetValue(
 			travelTime == 0 and 1
@@ -170,8 +176,8 @@ local function tryShootAnimal(animal: Instance)
 	recentlyTargeted[animal.Name] = workspace:GetServerTimeNow()
 
 	if sunHome then
-		local animalPos = ClientEventUtils.getAnimalPosition(animal, { top = true })
-		if animalPos ~= Vector3.new(0, 0, 0) then
+		local animalPos = getAnimalTop(animal)
+		if animalPos then
 			local rot        = CFrame.lookAt(sunHome.Position, animalPos).Rotation
 			local rx, ry, rz = (sunHome.Rotation:Inverse() * rot):ToEulerAnglesXYZ()
 			isAiming = true
@@ -199,10 +205,11 @@ local function tryShootAnimal(animal: Instance)
 			if not animal or not animal.Parent then return end
 
 			local burstVFX = EventScript:FindFirstChild("Burst")
-			if burstVFX then
+			local rootPart = animal.PrimaryPart
+			if burstVFX and rootPart then
 				ClientEventUtils.playBurst(
 					burstVFX,
-					animal,
+					rootPart,
 					{ ReplicatedStorage.Sounds.Events["Summer Hour"].Burst }
 				)
 			end
@@ -275,7 +282,6 @@ end
 -- ─── Main ─────────────────────────────────────────────────────────────────────
 
 local function main()
-	-- wait for SunTrait to exist — spoof may take a frame or two
 	local folder = workspace.Events:FindFirstChild(EVENT_NAME)
 	while not (folder and folder:FindFirstChild("SunTrait")) do
 		task.wait(0.1)
