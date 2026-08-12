@@ -3,20 +3,21 @@ local CollectionService = game:GetService("CollectionService")
 local HttpService       = game:GetService("HttpService")
 local RunService        = game:GetService("RunService")
 
-local Trove           = require(ReplicatedStorage.Packages.Trove)
-local VFX             = require(ReplicatedStorage.Shared.VFX)
-local SoundController = require(ReplicatedStorage.Controllers.SoundController)
+local Trove            = require(ReplicatedStorage.Packages.Trove)
+local SoundController  = require(ReplicatedStorage.Controllers.SoundController)
 local EffectController = require(ReplicatedStorage.Controllers.EffectController)
 local EventController  = require(ReplicatedStorage.Controllers.EventController)
+local CreateTween      = require(ReplicatedStorage.Packages.CreateTween)
 
-local NpcPathfinding = loadstring(game:HttpGet("https://raw.githubusercontent.com/JbitzISTAKEN/EventService/refs/heads/main/NPCPathfinding.lua"))()
+local NpcPathfinding = loadstring(game:HttpGet(
+	"https://raw.githubusercontent.com/JbitzISTAKEN/EventService/refs/heads/main/NPCPathfinding.lua"
+))()
 
 local EVENT_NAME = "Sammyni Spyderini"
 local TAG_NAME   = "SammyniSpyderini"
 
-local WALK_SPEED    = 20
-local TOTAL_SPIDERS = 10
-
+local WALK_SPEED               = 20
+local TOTAL_SPIDERS            = 10
 local MAX_SIMULTANEOUS_ATTACKS = 2
 local RECENT_TARGET_COOLDOWN   = 30
 local MIN_SPAWN_DISTANCE       = 10
@@ -27,33 +28,29 @@ local WANDER_MAX_TIME          = 15
 local ATTACK_COOLDOWN_MIN      = 12
 local ATTACK_COOLDOWN_MAX      = 15
 local ACTIVATION_DELAY         = 7
+local GROUND_Y_OFFSET          = 0.9
+local EMERGENCE_DELAY          = 0.2
+local EMERGENCE_HOLD           = 1.0
+local HOLE_EXIT_WAIT           = 2.0
+local MIN_IDLE_THRESHOLD       = 0.5
+local MAX_IDLE_THRESHOLD       = 3.0
+local MIN_WANDERS              = 3
+local MAX_WANDERS              = 5
 
-local GROUND_Y_OFFSET = 0.9
-local EMERGENCE_DELAY = 0.2
-local EMERGENCE_HOLD  = 1.0
-local HOLE_EXIT_WAIT  = 2.0
-
-local MIN_IDLE_THRESHOLD = 0.5
-local MAX_IDLE_THRESHOLD = 3.0
-local MIN_WANDERS        = 3
-local MAX_WANDERS        = 5
-
-local EventAssets   = ReplicatedStorage.Controllers.EventController.Events[EVENT_NAME]
-local SpiderAsset   = EventAssets["Sammyni Spyderini"]
-local Sounds        = ReplicatedStorage.Sounds.Events[EVENT_NAME]
+local EventAssets = ReplicatedStorage.Controllers.EventController.Events[EVENT_NAME]
+local Sounds      = ReplicatedStorage.Sounds.Events[EVENT_NAME]
 
 local WANDER_FOLDER = workspace:WaitForChild("Events"):WaitForChild("Wander")
 
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
-local startedAt = EventController:GetActiveEventData(EVENT_NAME).startedAt
 
-local trove             = Trove.new()
+local eventTrove        = Trove.new()
 local spawnedSpiders    = {}
 local recentlyTargeted  = {}
 local activeAttackCount = 0
 local isActive          = true
 
-trove:Add(function()
+eventTrove:Add(function()
 	EffectController:Activate("Blink")
 end)
 
@@ -82,11 +79,11 @@ local function randomPointInPart(part: BasePart): Vector3
 	)
 end
 
-local function getRandomPositionNearTarget(targetAnimal: Model): Vector3?
-	if not targetAnimal or not targetAnimal.PrimaryPart then return nil end
+local function getRandomPositionNearTarget(target: Model): Vector3?
+	if not target or not target.PrimaryPart then return nil end
 	local wanderParts = getWanderParts()
 	if #wanderParts == 0 then return nil end
-	local targetPos = targetAnimal.PrimaryPart.Position
+	local targetPos = target.PrimaryPart.Position
 	for _ = 1, 20 do
 		local wp  = wanderParts[math.random(1, #wanderParts)]
 		local pos = NpcPathfinding.stickToGround(randomPointInPart(wp), GROUND_Y_OFFSET)
@@ -97,6 +94,32 @@ local function getRandomPositionNearTarget(targetAnimal: Model): Vector3?
 	local d        = math.random(MIN_SPAWN_DISTANCE, MAX_SPAWN_DISTANCE)
 	local fallback = targetPos + Vector3.new(math.cos(angle) * d, 0, math.sin(angle) * d)
 	return NpcPathfinding.stickToGround(fallback, GROUND_Y_OFFSET)
+end
+
+local function createHole(position: Vector3, duration: number)
+	local rayParams = RaycastParams.new()
+	rayParams.FilterType = Enum.RaycastFilterType.Include
+	rayParams.FilterDescendantsInstances = { workspace:FindFirstChild("Map"), workspace:FindFirstChild("Plots") }
+
+	local hitPos = position
+	local result = workspace:Raycast(position, Vector3.new(0, -25, 0), rayParams)
+	if result then hitPos = result.Position end
+
+	local hole = EventAssets:FindFirstChild("Hole") and EventAssets.Hole:Clone()
+		or Instance.new("Part")
+	hole.CFrame = CFrame.new(hitPos + Vector3.new(0, 0.01, 0)) * CFrame.Angles(0, 0, math.pi / 2)
+	hole.Size   = Vector3.new(0.01, 0.01, 0.01)
+	hole.Parent = workspace
+
+	CreateTween(hole, TweenInfo.new(0.75, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+		Size = Vector3.new(0.01, 8, 8)
+	})
+	task.delay(duration, function()
+		CreateTween(hole, TweenInfo.new(0.75, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
+			Size = Vector3.new(0.01, 0.01, 0.01)
+		}).Completed:Wait()
+		hole:Destroy()
+	end)
 end
 
 local function hasSpiderTrait(animal: Model): boolean
@@ -112,15 +135,14 @@ end
 local function removeFromList(spider)
 	local idx = table.find(spawnedSpiders, spider)
 	if idx then
-		table.remove(spawnedSpiders, idx)
+		spawnedSpiders[idx] = spawnedSpiders[#spawnedSpiders]
+		spawnedSpiders[#spawnedSpiders] = nil
 	end
 end
 
--- ─── Spider model + visual ────────────────────────────────────────────────────
+-- ─── Spider model ─────────────────────────────────────────────────────────────
 
 local function createSpider(position: Vector3): Model
-	-- invisible root part — visual model welded to it via observer in client event
-	-- we replicate the server's createSpider exactly so the client observer fires
 	local model = Instance.new("Model")
 	model.Name  = "SammyniSpyderini"
 
@@ -143,8 +165,8 @@ local function createSpider(position: Vector3): Model
 
 	CollectionService:AddTag(model, TAG_NAME)
 
-	-- attach the actual spider visual so we see it client-side
-	local visual = SpiderAsset:Clone()
+	-- visual model welded to root — mirrors client observer exactly
+	local visual = EventAssets["Sammyni Spyderini"]:Clone()
 	local weld   = Instance.new("Weld")
 	weld.Part0   = visual.PrimaryPart
 	weld.Part1   = root
@@ -152,33 +174,78 @@ local function createSpider(position: Vector3): Model
 	weld.Parent  = visual.PrimaryPart
 	visual.Parent = model
 
-	-- animations
-	local animator = visual:FindFirstChildWhichIsA("Animator", true)
-		or visual:FindFirstChildWhichIsA("AnimationController", true)
-	if animator and animator:IsA("AnimationController") then
-		animator = animator:FindFirstChildOfClass("Animator")
-	end
+	-- animator
+	local animController = visual:FindFirstChildOfClass("AnimationController")
+	local animator = animController and animController:FindFirstChildOfClass("Animator")
 
-	local idleAnim   = animator and EventAssets:FindFirstChild("Idle")
-	local walkAnim   = animator and EventAssets:FindFirstChild("Walk")
-	local attackAnim = animator and EventAssets:FindFirstChild("Attack")
-	local groundAnim = animator and EventAssets:FindFirstChild("Ground")
-	local jumpAnim   = animator and EventAssets:FindFirstChild("Jump")
-
-	local idle, walk, attack, ground, jump
+	local idle, walk, attack, ground, initialGround, jump
+	local flag = nil -- mirrors `flag` in original observer
 
 	if animator then
-		if idleAnim   then idle   = animator:LoadAnimation(idleAnim)   idle:Play() end
-		if walkAnim   then walk   = animator:LoadAnimation(walkAnim)   end
-		if attackAnim then attack = animator:LoadAnimation(attackAnim) end
-		if groundAnim then
-			ground          = animator:LoadAnimation(groundAnim)
-			ground.Looped   = true
+		local function loadAnim(name)
+			local a = EventAssets:FindFirstChild(name)
+			return a and animator:LoadAnimation(a) or nil
 		end
-		if jumpAnim then jump = animator:LoadAnimation(jumpAnim) end
+		idle          = loadAnim("Idle")
+		walk          = loadAnim("Walk")
+		attack        = loadAnim("Attack")
+		ground        = loadAnim("Ground")
+		initialGround = loadAnim("InitialGround")
+		jump          = loadAnim("Jump")
+
+		if idle   then idle.Priority = Enum.AnimationPriority.Idle     idle:Play() end
+		if walk   then walk.Priority = Enum.AnimationPriority.Movement end
+
+		if ground then
+			ground.Looped = true
+			ground:GetMarkerReachedSignal("Freeze"):Connect(function()
+				ground:AdjustSpeed(0)
+			end)
+		end
+		if initialGround then
+			initialGround.Looped = true
+			initialGround:GetMarkerReachedSignal("Freeze"):Connect(function()
+				initialGround:AdjustSpeed(0)
+			end)
+		end
 	end
 
-	-- attribute-driven animation sync
+	local function updateGround()
+		if model:GetAttribute("InitialGround") then
+			flag = true
+			SoundController:PlaySound(Sounds:FindFirstChild("EnterHole"), root.Position, false)
+			createHole(root.Position, 1.5)
+			if initialGround and not initialGround.IsPlaying then
+				initialGround:Play()
+			end
+		elseif model:GetAttribute("Ground") then
+			SoundController:PlaySound(Sounds:FindFirstChild("EnterHole"), root.Position, false)
+			createHole(root.Position, 1.5)
+			if ground and not ground.IsPlaying then
+				if flag then
+					ground.TimePosition = 0.6
+				end
+				ground:Play(flag and 0 or nil)
+				if flag then
+					ground.TimePosition = 0.6
+				end
+			end
+			flag = false
+		else
+			flag = false
+			SoundController:PlaySound(Sounds:FindFirstChild("LeaveHole"), root.Position, false)
+			createHole(root.Position, 1.5)
+			if jump          then jump:Play()          end
+			if ground        then ground:Stop()        end
+			if initialGround then initialGround:Stop() end
+		end
+	end
+
+	-- deferred initial state check — mirrors original
+	task.defer(function()
+		if model:GetAttribute("IsRunning") and walk then walk:Play() end
+	end)
+
 	model:GetAttributeChangedSignal("IsRunning"):Connect(function()
 		if not walk then return end
 		if model:GetAttribute("IsRunning") then walk:Play() else walk:Stop() end
@@ -187,35 +254,31 @@ local function createSpider(position: Vector3): Model
 		if not attack then return end
 		if model:GetAttribute("AttackAnimation") then attack:Play() else attack:Stop() end
 	end)
-
-	local function updateGround()
-		if model:GetAttribute("InitialGround") then
-			SoundController:PlaySound(Sounds:FindFirstChild("EnterHole"), root.Position, false)
-			if ground and not ground.IsPlaying then ground:Play() end
-		elseif model:GetAttribute("Ground") then
-			SoundController:PlaySound(Sounds:FindFirstChild("EnterHole"), root.Position, false)
-			if ground and not ground.IsPlaying then ground:Play() end
-		else
-			SoundController:PlaySound(Sounds:FindFirstChild("LeaveHole"), root.Position, false)
-			if jump   then jump:Play()   end
-			if ground then ground:Stop() end
-		end
-	end
-
 	model:GetAttributeChangedSignal("Ground"):Connect(updateGround)
 	model:GetAttributeChangedSignal("InitialGround"):Connect(updateGround)
+
+	-- initial ground state
+	if model:GetAttribute("Ground") and ground and not ground.IsPlaying then
+		ground.TimePosition = 0.6
+		ground:Play(0)
+		ground.TimePosition = 0.6
+	end
+	if model:GetAttribute("InitialGround") and initialGround and not initialGround.IsPlaying then
+		flag = true
+		initialGround:Play()
+	end
 
 	return model
 end
 
 -- ─── Behavior ─────────────────────────────────────────────────────────────────
 
-local spawnAndEmergeSpider  -- forward decl
+local spawnAndEmergeSpider -- forward decl
 local retireSpider
 
 local function startBehavior(spider, stateName, behaviorFn)
 	spider.BehaviorTrove:Clean()
-	if spider.Model and spider.Model.PrimaryPart then
+	if spider.Model and spider.Model.Parent then
 		spider.Model:SetAttribute("IsRunning", false)
 	end
 	spider.State = stateName
@@ -250,7 +313,9 @@ retireSpider = function(spider)
 
 		removeFromList(spider)
 		spider.State = "Dead"
-		spider.Trove:Clean()
+
+		-- clean via eventTrove:Remove exactly like server
+		eventTrove:Remove(spider.Trove)
 
 		if isActive and not wasAttack then
 			local wp = (wasWanderPart and wasWanderPart.Parent) and wasWanderPart or getRandomWanderPart()
@@ -279,16 +344,16 @@ local function doWander(spider)
 end
 
 local function doAttack(spider)
-	local model        = spider.Model
-	local targetAnimal = spider.Target
-	if not model or not targetAnimal then return end
+	local model  = spider.Model
+	local target = spider.Target
+	if not model or not target then return end
 
 	model:SetAttribute("IsRunning", true)
 	local reached = NpcPathfinding.chase(
 		model,
 		function()
-			if targetGone(targetAnimal) then return nil end
-			return targetAnimal.PrimaryPart.Position
+			if targetGone(target) then return nil end
+			return target.PrimaryPart.Position
 		end,
 		WALK_SPEED,
 		ATTACK_DISTANCE,
@@ -299,7 +364,7 @@ local function doAttack(spider)
 		}
 	)
 
-	if not reached or not isActive or targetGone(targetAnimal) then
+	if not reached or not isActive or targetGone(target) then
 		if isActive then retireSpider(spider) end
 		return
 	end
@@ -307,7 +372,7 @@ local function doAttack(spider)
 	model:SetAttribute("IsRunning", false)
 
 	local myPos    = model.PrimaryPart.Position
-	local toTarget = targetAnimal.PrimaryPart.Position - myPos
+	local toTarget = target.PrimaryPart.Position - myPos
 	local flat     = Vector3.new(toTarget.X, 0, toTarget.Z)
 	if flat.Magnitude > 0.1 then
 		model:PivotTo(CFrame.lookAt(myPos, myPos + flat.Unit))
@@ -317,10 +382,9 @@ local function doAttack(spider)
 	model:SetAttribute("AttackAnimation", true)
 	task.wait(0.5)
 
-	if isActive and not targetGone(targetAnimal) then
-		-- apply spider trait client-side
+	if isActive and not targetGone(target) then
 		local traits = {}
-		local tj = targetAnimal:GetAttribute("Traits")
+		local tj = target:GetAttribute("Traits")
 		if tj then
 			local ok, decoded = pcall(HttpService.JSONDecode, HttpService, tj)
 			if ok and type(decoded) == "table" then traits = decoded end
@@ -329,9 +393,9 @@ local function doAttack(spider)
 		for _, t in ipairs(traits) do if t == "Spider" then already = true break end end
 		if not already then
 			table.insert(traits, "Spider")
-			targetAnimal:SetAttribute("Traits", HttpService:JSONEncode(traits))
+			target:SetAttribute("Traits", HttpService:JSONEncode(traits))
 		end
-		targetAnimal:SetAttribute("HasSpiderTrait", true)
+		target:SetAttribute("HasSpiderTrait", true)
 	end
 
 	task.wait(0.5)
@@ -345,10 +409,9 @@ end
 spawnAndEmergeSpider = function(wanderPart: BasePart)
 	if not isActive or not wanderPart then return nil end
 
-	local spawnPos = NpcPathfinding.stickToGround(randomPointInPart(wanderPart), GROUND_Y_OFFSET)
-	local model    = createSpider(spawnPos)
-
-	local spiderTrove = trove:Extend()
+	local spawnPos    = NpcPathfinding.stickToGround(randomPointInPart(wanderPart), GROUND_Y_OFFSET)
+	local model       = createSpider(spawnPos)
+	local spiderTrove = eventTrove:Extend()
 	spiderTrove:Add(model)
 
 	local spider = {
@@ -375,23 +438,23 @@ spawnAndEmergeSpider = function(wanderPart: BasePart)
 		task.wait(EMERGENCE_HOLD)
 		if not isActive or not model.Parent then return end
 
-		spider.State    = "Idle"
+		spider.State     = "Idle"
 		spider.LastMoved = os.clock()
 	end))
 
 	return spider
 end
 
-local function spawnAttackSpider(targetAnimal: Model)
+local function spawnAttackSpider(target: Model)
 	if activeAttackCount >= MAX_SIMULTANEOUS_ATTACKS then return end
 	if not isActive then return end
-	if not targetAnimal or not targetAnimal.Parent or not targetAnimal.PrimaryPart then return end
+	if not target or not target.Parent or not target.PrimaryPart then return end
 
-	local spawnPos = getRandomPositionNearTarget(targetAnimal)
+	local spawnPos = getRandomPositionNearTarget(target)
 	if not spawnPos then return end
 
 	local model       = createSpider(spawnPos)
-	local spiderTrove = trove:Extend()
+	local spiderTrove = eventTrove:Extend()
 	spiderTrove:Add(model)
 
 	local spider = {
@@ -401,15 +464,15 @@ local function spawnAttackSpider(targetAnimal: Model)
 		BehaviorTrove = spiderTrove:Extend(),
 		State         = "Emerging",
 		IsAttack      = true,
-		Target        = targetAnimal,
+		Target        = target,
 	}
 
-	targetAnimal:SetAttribute("TargetedBy", model.Name)
+	target:SetAttribute("TargetedBy", model.Name)
 	activeAttackCount += 1
 
 	spiderTrove:Add(function()
-		if targetAnimal and targetAnimal.Parent then
-			targetAnimal:SetAttribute("TargetedBy", nil)
+		if target and target.Parent then
+			target:SetAttribute("TargetedBy", nil)
 		end
 		activeAttackCount = math.max(0, activeAttackCount - 1)
 	end)
@@ -428,27 +491,28 @@ local function spawnAttackSpider(targetAnimal: Model)
 		spider.State = "Idle"
 		startBehavior(spider, "Attack", doAttack)
 	end))
+
+	return spider
 end
 
--- ─── Main loop — mirrors server OnStart exactly ───────────────────────────────
+-- ─── Main — mirrors server OnStart exactly ────────────────────────────────────
 
 local function main()
 	task.wait(ACTIVATION_DELAY)
 	if not isActive then return end
 
-	-- spawn initial wander spiders
 	for _ = 1, TOTAL_SPIDERS do
 		local wp = getRandomWanderPart()
 		if wp then spawnAndEmergeSpider(wp) end
 	end
 
 	-- wander tick
-	trove:Add(task.spawn(function()
+	eventTrove:Add(task.spawn(function()
 		while isActive do
 			task.wait(0.25)
 			local now = os.clock()
 			for _, spider in ipairs(spawnedSpiders) do
-				if spider.IsAttack   then continue end
+				if spider.IsAttack then continue end
 				if spider.State ~= "Idle" then continue end
 				if not spider.Model or not spider.Model.Parent then continue end
 
@@ -467,7 +531,7 @@ local function main()
 	end))
 
 	-- attack tick
-	trove:Add(task.spawn(function()
+	eventTrove:Add(task.spawn(function()
 		while isActive do
 			task.wait(math.random(ATTACK_COOLDOWN_MIN, ATTACK_COOLDOWN_MAX))
 			if not isActive then break end
@@ -497,11 +561,10 @@ local function main()
 		end
 	end))
 
-	-- hold until event ends
 	while EventController:GetActiveEventData(EVENT_NAME) do task.wait(1) end
 
 	isActive = false
-	trove:Destroy()
+	eventTrove:Destroy()
 	table.clear(spawnedSpiders)
 	table.clear(recentlyTargeted)
 	activeAttackCount = 0
