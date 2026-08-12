@@ -12,7 +12,7 @@ local filterDirty   = true
 local DEFAULT_REACH_THRESHOLD = 1.5
 local DEFAULT_TURN_SPEED = 8
 
-local function isModelValid(model)
+local function isModelValid(model: Model): boolean
 	if not model then return false end
 	if not model.Parent then return false end
 	if not model.PrimaryPart then return false end
@@ -20,7 +20,7 @@ local function isModelValid(model)
 	return true
 end
 
-local function smoothTurn(model, newPos, flatDir, dt, turnSpeed)
+local function smoothTurn(model: Model, newPos: Vector3, flatDir: Vector3, dt: number, turnSpeed: number)
 	if not isModelValid(model) then return end
 	if not newPos then return end
 	if not flatDir then return end
@@ -29,6 +29,7 @@ local function smoothTurn(model, newPos, flatDir, dt, turnSpeed)
 	if flatDir.Magnitude < 1e-4 then
 		local primaryPart = model.PrimaryPart
 		if not primaryPart then return end
+
 		local look = primaryPart.CFrame.LookVector
 		flatDir = Vector3.new(look.X, 0, look.Z)
 		if flatDir.Magnitude < 1e-4 then
@@ -38,29 +39,36 @@ local function smoothTurn(model, newPos, flatDir, dt, turnSpeed)
 	flatDir = flatDir.Unit
 
 	if not isModelValid(model) then return end
+
 	local primaryPart = model.PrimaryPart
 	if not primaryPart then return end
 
 	local currentCFrame = primaryPart.CFrame
+	if not currentCFrame then return end
+
 	local targetCF = CFrame.new(newPos, newPos + flatDir)
+
 	local currentRot = CFrame.new(newPos)
 		* CFrame.fromMatrix(
 			Vector3.zero,
 			currentCFrame.RightVector,
 			Vector3.new(0, 1, 0)
 		)
+
 	local alpha = math.min(1, turnSpeed * dt)
 
 	if not isModelValid(model) then return end
+
 	local ok, err = pcall(function()
 		model:PivotTo(currentRot:Lerp(targetCF, alpha))
 	end)
+
 	if not ok then
 		warn("[NpcPathfinding] smoothTurn PivotTo failed:", err)
 	end
 end
 
-local function addWalkable(inst)
+local function addWalkable(inst: Instance)
 	if not inst then return end
 	if not inst:IsA("BasePart") then return end
 	if walkableSet[inst] then return end
@@ -69,7 +77,7 @@ local function addWalkable(inst)
 	filterDirty = true
 end
 
-local function removeWalkable(inst)
+local function removeWalkable(inst: Instance)
 	if not inst then return end
 	if not walkableSet[inst] then return end
 	walkableSet[inst] = nil
@@ -102,15 +110,23 @@ local function refreshGroundFilter()
 	end
 end
 
-function NpcPathfinding.stickToGround(position, yOffset, castUp, castDown, ignoreModel)
+function NpcPathfinding.stickToGround(
+	position: Vector3,
+	yOffset: number?,
+	castUp: number?,
+	castDown: number?,
+	ignoreModel: Model?
+): Vector3
 	if not position then return Vector3.new(0, 0, 0) end
 
-	local up   = castUp   or 10
+	local up  = castUp   or 10
 	local down = castDown or 50
 	local off  = yOffset  or 1.5
 
 	refreshGroundFilter()
-	if #walkableParts == 0 then return position end
+	if #walkableParts == 0 then
+		return position
+	end
 
 	local rayParams = groundRayParams
 	if ignoreModel then
@@ -142,7 +158,11 @@ local DEFAULT_AGENT_PARAMS = {
 	WaypointSpacing = 4,
 }
 
-function NpcPathfinding.computePath(startPos, endPos, agentParams)
+function NpcPathfinding.computePath(
+	startPos: Vector3,
+	endPos: Vector3,
+	agentParams: {[string]: any}?
+): { Vector3 }?
 	if not startPos then return nil end
 	if not endPos then return nil end
 
@@ -158,7 +178,9 @@ function NpcPathfinding.computePath(startPos, endPos, agentParams)
 	end
 
 	local waypoints = path:GetWaypoints()
-	if not waypoints or #waypoints == 0 then return nil end
+	if not waypoints or #waypoints == 0 then
+		return nil
+	end
 
 	local result = table.create(#waypoints)
 	for i = 2, #waypoints do
@@ -175,7 +197,12 @@ function NpcPathfinding.computePath(startPos, endPos, agentParams)
 	return result
 end
 
-function NpcPathfinding.moveTo(model, targetPos, speed, opts)
+function NpcPathfinding.moveTo(
+	model: Model,
+	targetPos: Vector3,
+	speed: number,
+	opts: {[string]: any}?
+): boolean
 	if not isModelValid(model) then return false end
 	if not targetPos then return false end
 	if not speed or speed <= 0 then return false end
@@ -191,7 +218,9 @@ function NpcPathfinding.moveTo(model, targetPos, speed, opts)
 	if not primaryPart then return false end
 
 	local waypoints = NpcPathfinding.computePath(primaryPart.Position, targetPos)
-	if not waypoints or #waypoints == 0 then return false end
+	if not waypoints or #waypoints == 0 then
+		return false
+	end
 
 	local startClock = os.clock()
 
@@ -240,7 +269,14 @@ function NpcPathfinding.moveTo(model, targetPos, speed, opts)
 	return isModelValid(model)
 end
 
-function NpcPathfinding.chase(model, getTargetPos, speed, stopDistance, maxTime, opts)
+function NpcPathfinding.chase(
+	model: Model,
+	getTargetPos: () -> Vector3?,
+	speed: number,
+	stopDistance: number,
+	maxTime: number,
+	opts: {[string]: any}?
+): boolean
 	if not isModelValid(model) then return false end
 	if not getTargetPos then return false end
 	if not speed or speed <= 0 then return false end
@@ -289,6 +325,7 @@ function NpcPathfinding.chase(model, getTargetPos, speed, stopDistance, maxTime,
 
 		if needRepath then
 			if not isModelValid(model) then return false end
+
 			local pPart2 = model.PrimaryPart
 			if not pPart2 then return false end
 
@@ -303,7 +340,9 @@ function NpcPathfinding.chase(model, getTargetPos, speed, stopDistance, maxTime,
 			end
 		end
 
-		if not waypoints or wpIndex > #waypoints then continue end
+		if not waypoints or wpIndex > #waypoints then
+			continue
+		end
 
 		local wp = waypoints[wpIndex]
 		if not wp then
@@ -312,6 +351,7 @@ function NpcPathfinding.chase(model, getTargetPos, speed, stopDistance, maxTime,
 		end
 
 		if not isModelValid(model) then return false end
+
 		local pPart3 = model.PrimaryPart
 		if not pPart3 then return false end
 
@@ -328,6 +368,7 @@ function NpcPathfinding.chase(model, getTargetPos, speed, stopDistance, maxTime,
 		if dt <= 0 then continue end
 
 		if not isModelValid(model) then return false end
+
 		local pPart4 = model.PrimaryPart
 		if not pPart4 then return false end
 
@@ -347,4 +388,4 @@ function NpcPathfinding.chase(model, getTargetPos, speed, stopDistance, maxTime,
 	end
 end
 
-return NpcPathfinding
+return NpcPathfinding	
