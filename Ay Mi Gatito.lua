@@ -22,8 +22,11 @@ local VARIANTS = {
     GatitoAssets:WaitForChild("Crying Gatito"),
 }
 
--- Same Wander folder Sammyni uses
 local WANDER_FOLDER = workspace:WaitForChild("Events"):WaitForChild("Wander")
+
+-- 7 seconds matches the AyMiGatito client activation delay exactly —
+-- blink, map VFX, and music all fire at startedAt + 7
+local ACTIVATION_DELAY   = 7
 
 local GATITOS_PER_WANDER = 3
 local WANDER_SPEED       = 16
@@ -37,6 +40,9 @@ local ATTACK_LOOP_MIN    = 5
 local ATTACK_LOOP_MAX    = 10
 
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
+
+local eventData   = EventController:GetActiveEventData(EVENT_NAME)
+local startedAt   = eventData.startedAt
 
 local eventTrove      = Trove.new()
 local spawnedEntities = {}
@@ -57,12 +63,6 @@ local function getWanderParts(): { BasePart }
         if p:IsA("BasePart") then table.insert(parts, p) end
     end
     return parts
-end
-
-local function getRandomWanderPart(): BasePart?
-    local parts = getWanderParts()
-    if #parts == 0 then return nil end
-    return parts[math.random(1, #parts)]
 end
 
 local function randomPointInPart(part: BasePart): Vector3
@@ -95,10 +95,11 @@ local function createGatito(position: Vector3): Model
     local template = VARIANTS[variantIndex]
     variantIndex   = variantIndex % #VARIANTS + 1
 
-    -- Clone straight from EventController.Events path, parent to workspace
     local model = template:Clone()
     model.Name  = "Gatito"
 
+    -- The cloned model already has the full mesh + AnimationController inside.
+    -- We just need a proper HumanoidRootPart as PrimaryPart for PivotTo to work.
     local root = model:FindFirstChild("HumanoidRootPart")
         or model.PrimaryPart
         or model:FindFirstChildWhichIsA("BasePart")
@@ -117,10 +118,16 @@ local function createGatito(position: Vector3): Model
     root.CFrame     = CFrame.new(stickToGround(position))
     model.PrimaryPart = root
 
-    model:SetAttribute("Dance",     true)
-    model:SetAttribute("IsRunning", false)
-    model:SetAttribute("IsChasing", false)
+    -- These attributes are what the AyMiGatito client observer reads to
+    -- switch between Dance, Walk, and Idle animations — set them before
+    -- parenting so the observer picks them up on the first frame.
+    model:SetAttribute("Dance",          true)
+    model:SetAttribute("IsRunning",      false)
+    model:SetAttribute("IsChasing",      false)
+    model:SetAttribute("AttackAnimation",false)
 
+    -- Tag fires Observers.observeTag("Gatito") in the client LocalScript,
+    -- which clones the visual mesh onto the model and wires all animations.
     CollectionService:AddTag(model, TAG_NAME)
 
     model.Parent = workspace
@@ -269,10 +276,17 @@ end
 -- ─── Main ─────────────────────────────────────────────────────────────────────
 
 local function main()
-    local wanderParts = getWanderParts()
+    -- Wait until startedAt + 7 — same window the client fires blink + map VFX.
+    -- If we're already past it (late join), skip the wait entirely.
+    local timeUntilActivation = (startedAt + ACTIVATION_DELAY) - workspace:GetServerTimeNow()
+    if timeUntilActivation > 0 then
+        task.wait(timeUntilActivation)
+    end
+    if not isActive then return end
 
+    local wanderParts = getWanderParts()
     if #wanderParts == 0 then
-        warn("[AyMiGatito] No BaseParts found in", WANDER_FOLDER:GetFullName())
+        warn("[AyMiGatito] No BaseParts in", WANDER_FOLDER:GetFullName())
         return
     end
 
