@@ -1,12 +1,9 @@
--- Mygame43 1:1 local recreation
--- drop inside spoofer task.spawn after Execute succeeds
--- call returned stopMygame43() at expiry before EventController:Cancel
-
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local CollectionService = game:GetService("CollectionService")
-local HttpService       = game:GetService("HttpService")
-local RunService        = game:GetService("RunService")
-local TweenService      = game:GetService("TweenService")
+local ReplicatedStorage          = game:GetService("ReplicatedStorage")
+local CollectionService          = game:GetService("CollectionService")
+local HttpService                = game:GetService("HttpService")
+local RunService                 = game:GetService("RunService")
+local TweenService               = game:GetService("TweenService")
+local Debris                     = game:GetService("Debris")
 
 local SharedEventUtils           = require(ReplicatedStorage.Shared.SharedEventUtils)
 local MathUtils                  = require(ReplicatedStorage.Utils.MathUtils)
@@ -20,37 +17,9 @@ local Observers                  = require(ReplicatedStorage.Packages.Observers)
 local EffectController           = require(ReplicatedStorage.Controllers.EffectController)
 local SkullEmojiEffectController = require(ReplicatedStorage.Controllers.SkullEmojiEffectController)
 
-local CurrentCamera = workspace.CurrentCamera
-local trove         = Trove.new()
-local recentlyHit   = {}
-local IsActive      = true
-
--- startedAt passed in from spoofer via ... — fixes loadstring scope gap
-local startedAt = ...
-
-local function timeLeftFor(t)
-    return startedAt + t - workspace:GetServerTimeNow()
-end
-
--- ─── Model ────────────────────────────────────────────────────────────────────
-
+local EventScript   = ReplicatedStorage.Controllers.EventController.Events.Mygame43
 local Mygame43Model = ReplicatedStorage:WaitForChild("Models").Events.Mygame43.mygame43
-local eventScript   = ReplicatedStorage.Controllers.EventController.Events.Mygame43
-
-local clone = Mygame43Model:Clone()
-clone.Parent = workspace
-clone:AddTag("Mygame43")
-trove:Add(clone)
-
--- play appear sound — decompiled line 105
-ReplicatedStorage.Sounds.Events.Mygame43.Appear:Play()
-
--- blink effect on cleanup — decompiled line 85
-trove:Add(function()
-    EffectController:Activate("Blink")
-end)
-
--- ─── Camera shake ─────────────────────────────────────────────────────────────
+local Sounds        = ReplicatedStorage.Sounds.Events.Mygame43
 
 local shakeBase = Shake.new()
 shakeBase.Amplitude         = 5.5
@@ -60,28 +29,53 @@ shakeBase.FadeOutTime       = 0.6
 shakeBase.PositionInfluence = Vector3.new(0.5, 0.5, 0.5)
 shakeBase.RotationInfluence = Vector3.new(2.5, 0.5, 0.5)
 
+-- wait for spoofer to set the attribute before doing anything
+repeat task.wait() until ReplicatedStorage:GetAttribute("Mygame43")
+
+local trove       = Trove.new()
+local recentlyHit = {}
+local v22         = nil
+
+local function timeLeftFor(t)
+    local startedAt = ReplicatedStorage:GetAttribute("Mygame43StartedAt")
+    return startedAt + t - workspace:GetServerTimeNow()
+end
+
+-- ─── Model ────────────────────────────────────────────────────────────────────
+
+local clone = Mygame43Model:Clone()
+clone.Parent = workspace
+clone:AddTag("Mygame43")
+trove:Add(clone)
+
+Sounds.Appear:Play()
+
+trove:Add(function()
+    EffectController:Activate("Blink")
+end)
+
+-- ─── Camera shake ─────────────────────────────────────────────────────────────
+
 local function shakeCameraBasedOnProximity(pos)
-    local mag = (CurrentCamera.CFrame.Position - pos).Magnitude
+    local mag = (workspace.CurrentCamera.CFrame.Position - pos).Magnitude
     if mag > 300 then return end
     local s  = shakeBase:Clone()
     local v2 = (1 - mag / 300 * 0.5) ^ 2
     s.Amplitude         = s.Amplitude         * v2
     s.RotationInfluence = s.RotationInfluence * v2
-    trove:Add(ShakePresets.BindShakeToCamera(s))
+    ShakePresets.BindShakeToCamera(s)
     s:Start()
 end
 
--- ─── v22 + all model-dependent logic ─────────────────────────────────────────
-
-local v22 = nil
+-- ─── v22 observer ─────────────────────────────────────────────────────────────
 
 trove:Add(Observers.observeTag("Mygame43", function(model)
     v22 = model
 
     local animator = v22.Humanoid and v22.Humanoid.Animator
     if animator then
-        local idle  = animator:LoadAnimation(eventScript.Idle)
-        local spawn = animator:LoadAnimation(eventScript.Spawn)
+        local idle  = animator:LoadAnimation(EventScript.Idle)
+        local spawn = animator:LoadAnimation(EventScript.Spawn)
 
         idle:Play()
         spawn:Play()
@@ -94,8 +88,7 @@ trove:Add(Observers.observeTag("Mygame43", function(model)
     end
 
     -- floating orbs at 7.7s
-    local orbGate = timeLeftFor(7.7)
-    trove:Add(task.delay(math.max(0, orbGate), function()
+    trove:Add(task.delay(math.max(0, timeLeftFor(7.7)), function()
         for i = 1, 4 do
             local offsetCF = CFrame.new(
                 (i - 1) * 30 + -45,
@@ -103,11 +96,10 @@ trove:Add(Observers.observeTag("Mygame43", function(model)
                 15
             )
             local anchorCF = v22 and v22.HumanoidRootPart.CFrame * offsetCF or offsetCF
-            local orb = trove:Clone(eventScript.Orb)
+            local orb = trove:Clone(EventScript.Orb)
 
             orb.CFrame = anchorCF - Vector3.new(0, 100, 0)
             orb.Parent = workspace
-
             trove:Add(function() Spr.stop(orb) end)
 
             local floatSpeed = Random.new():NextNumber(2, 3)
@@ -127,14 +119,13 @@ trove:Add(Observers.observeTag("Mygame43", function(model)
     end))
 
     -- VFX + camera focus at 3.7s
-    local focusGate = timeLeftFor(3.7)
-    trove:Add(task.delay(math.max(0, focusGate), function()
+    trove:Add(task.delay(math.max(0, timeLeftFor(3.7)), function()
         VFX.enable(v22)
 
         local focusConn = RunService.PreRender:Connect(function(dt)
             debug.profilebegin("Mygame43:Focus")
-            local cf = CurrentCamera.CFrame
-            CurrentCamera.CFrame = cf:Lerp(
+            local cf = workspace.CurrentCamera.CFrame
+            workspace.CurrentCamera.CFrame = cf:Lerp(
                 CFrame.lookAt(cf.Position, v22:GetPivot().Position),
                 dt ^ 0.45
             )
@@ -160,10 +151,10 @@ local function fireOrbLocally(seed, orbIndex, targetPos, flightDuration, didHit)
     )
     local Position = (v22 and v22.HumanoidRootPart.CFrame * originCF or originCF).Position
 
-    local orb = trove:Clone(eventScript.OrbSmaller)
+    local orb = trove:Clone(EventScript.OrbSmaller)
     orb.CFrame = CFrame.new(Position)
 
-    local flySound = ReplicatedStorage.Sounds.Events.Mygame43.OrbFlying:Clone()
+    local flySound = Sounds.OrbFlying:Clone()
     flySound.Parent = orb
     orb.Parent      = workspace
     flySound:Play()
@@ -205,14 +196,13 @@ local function fireOrbLocally(seed, orbIndex, targetPos, flightDuration, didHit)
             trove:Remove(conn)
             conn = nil
             VFX.disable(orb)
-
             task.delay(3, function() trove:Remove(orb) end)
 
             shakeCameraBasedOnProximity(targetPos)
 
             local strike = didHit
-                and eventScript.StrikeBrainrot:Clone()
-                or  eventScript.Strike:Clone()
+                and EventScript.StrikeBrainrot:Clone()
+                or  EventScript.Strike:Clone()
 
             strike.Position = targetPos
             strike.Parent   = workspace
@@ -227,7 +217,7 @@ local function fireOrbLocally(seed, orbIndex, targetPos, flightDuration, didHit)
                 )
             else
                 SoundController:PlaySound(
-                    ReplicatedStorage.Sounds.Events.Mygame43.OrbHitNothing,
+                    Sounds.OrbHitNothing,
                     targetPos,
                     false
                 )
@@ -301,19 +291,20 @@ local function pickTarget()
     return nil, nil, false
 end
 
--- ─── Main loop — gated at 7.7s ────────────────────────────────────────────────
+-- ─── Main loop ────────────────────────────────────────────────────────────────
 
-task.spawn(function()
+local function loop()
+    -- gate at 7.7s matching decompiled spawn delay
     local gate = timeLeftFor(7.7)
     if gate > 0 then task.wait(gate) end
 
-    while IsActive do
+    while ReplicatedStorage:GetAttribute("Mygame43") do
         task.wait(Random.new():NextNumber(2, 4))
-        if not IsActive then break end
+        if not ReplicatedStorage:GetAttribute("Mygame43") then break end
 
         local numBalls = math.random(1, 2)
         for i = 1, numBalls do
-            if not IsActive then break end
+            if not ReplicatedStorage:GetAttribute("Mygame43") then break end
 
             local targetPos, flightDuration, didHit = pickTarget()
             if targetPos then
@@ -325,12 +316,8 @@ task.spawn(function()
             if i < numBalls then task.wait(0.5) end
         end
     end
-end)
 
--- ─── Cleanup ──────────────────────────────────────────────────────────────────
-
-local function stopMygame43()
-    IsActive = false
+    -- cleanup on attribute cleared
     trove:Destroy()
     recentlyHit = {}
     for _, obj in ipairs(CollectionService:GetTagged("Mygame43")) do
@@ -338,4 +325,4 @@ local function stopMygame43()
     end
 end
 
-return stopMygame43
+task.spawn(loop)
