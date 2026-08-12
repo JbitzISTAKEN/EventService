@@ -1,10 +1,9 @@
--- LocalScript: BrazilLogic
--- StarterPlayerScripts or run via spoofer after Brazil is active
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 local HttpService       = game:GetService("HttpService")
 local RunService        = game:GetService("RunService")
+local TweenService      = game:GetService("TweenService")
 
 local Trove           = require(ReplicatedStorage.Packages.Trove)
 local EventController = require(ReplicatedStorage.Controllers.EventController)
@@ -27,8 +26,8 @@ repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
 
 local eventTrove       = Trove.new()
 local recentlyTargeted = {}
-local isTargeting      = false
 local isActive         = true
+local currentTween: Tween? = nil
 
 local MapFloor = workspace:WaitForChild("Events")
 	:WaitForChild("Brazil")
@@ -49,10 +48,8 @@ end
 local function isOnCarpet(pos: Vector3): boolean
 	local dy = math.abs(pos.Y - MapFloor.Position.Y)
 	if dy > CARPET_Y_THRESHOLD then return false end
-	local hx = MapFloor.Size.X * 0.5
-	local hz = MapFloor.Size.Z * 0.5
-	return math.abs(pos.X - MapFloor.Position.X) <= hx
-		and math.abs(pos.Z - MapFloor.Position.Z) <= hz
+	return math.abs(pos.X - MapFloor.Position.X) <= MapFloor.Size.X * 0.5
+		and math.abs(pos.Z - MapFloor.Position.Z) <= MapFloor.Size.Z * 0.5
 end
 
 local function getLightPart(): Part?
@@ -60,6 +57,28 @@ local function getLightPart(): Part?
 		if p:IsA("Part") then return p end
 	end
 	return nil
+end
+
+local function cancelTween()
+	if currentTween then
+		currentTween:Cancel()
+		currentTween = nil
+	end
+end
+
+local function tweenLightTo(light: Part, position: Vector3)
+	cancelTween()
+	local distance = (light.Position - position).Magnitude
+	local duration = math.max(distance / LIGHT_SPEED, 0.1)
+	local tween = TweenService:Create(
+		light,
+		TweenInfo.new(duration, Enum.EasingStyle.Linear),
+		{ CFrame = CFrame.new(position) }
+	)
+	currentTween = tween
+	tween:Play()
+	tween.Completed:Wait()
+	currentTween = nil
 end
 
 local function decodeTraits(animal: Model): { string }
@@ -97,32 +116,18 @@ local function pruneTargeted()
 	end
 end
 
-local function tweenLightTo(light: Part, position: Vector3)
-	local distance = (light.Position - position).Magnitude
-	local duration = math.max(distance / LIGHT_SPEED, 0.1)
-	local tween = game:GetService("TweenService"):Create(
-		light,
-		TweenInfo.new(duration, Enum.EasingStyle.Linear),
-		{ CFrame = CFrame.new(position) }
-	)
-	tween:Play()
-	tween.Completed:Wait()
-end
+-- ─── Single loop — wander and focus unified ───────────────────────────────────
 
--- ─── Focus cycle ──────────────────────────────────────────────────────────────
-
-local function runFocusCycle()
+local function mainLoop()
 	while isActive do
-		task.wait(math.random(ATTACK_COOLDOWN_MIN, ATTACK_COOLDOWN_MAX))
-		if not isActive then break end
-		if isTargeting then continue end
+		local light = getLightPart()
+		if not light then
+			task.wait(0.5)
+			continue
+		end
 
 		pruneTargeted()
 
-		local light = getLightPart()
-		if not light then continue end
-
-		-- wander randomly while picking
 		local candidates = {}
 		for _, animal in ipairs(CollectionService:GetTagged("Animal")) do
 			if not animal.PrimaryPart then continue end
@@ -133,18 +138,40 @@ local function runFocusCycle()
 		end
 
 		if #candidates == 0 then
-			-- no valid targets; just drift to a random spot
+			-- no targets, wander randomly
 			tweenLightTo(light, getRandomPosition())
 			continue
 		end
 
-		local selected = candidates[math.random(1, #candidates)]
-		if not selected.PrimaryPart then continue end
+		-- wander 1-2 times before committing to a target
+		local wanderCount = math.random(1, 2)
+		for _ = 1, wanderCount do
+			if not isActive then break end
+			light = getLightPart()
+			if not light then break end
+			tweenLightTo(light, getRandomPosition())
+			task.wait(0.3)
+		end
 
-		isTargeting = true
+		if not isActive then break end
+
+		light = getLightPart()
+		if not light then continue end
+
+		-- re-check candidates after wander
+		local selected: Model? = nil
+		for _, animal in ipairs(candidates) do
+			if animal.Parent and animal.PrimaryPart and not hasBrazilTrait(animal) then
+				selected = animal
+				break
+			end
+		end
+
+		if not selected or not selected.PrimaryPart then continue end
+
 		recentlyTargeted[selected.Name] = workspace:GetServerTimeNow()
 
-		-- move light to animal XZ at light's current Y
+		-- move to animal
 		local targetPos = Vector3.new(
 			selected.PrimaryPart.Position.X,
 			light.Position.Y,
@@ -152,15 +179,17 @@ local function runFocusCycle()
 		)
 		tweenLightTo(light, targetPos)
 
-		-- track animal while burst charges
 		light = getLightPart()
-		if not light then isTargeting = false continue end
+		if not light then continue end
 
+		-- set Focused — Square cage starts growing on the client event script
 		local now = workspace:GetServerTimeNow()
 		light:SetAttribute("Focused", now)
 
-		-- track animal movement during burst grow
-		local trackConn = RunService.Heartbeat:Connect(function()
+		-- track animal for burst duration with heartbeat, no blocking tween
+		local elapsed  = 0
+		local trackConn = RunService.Heartbeat:Connect(function(dt)
+			elapsed += dt
 			if not light or not light.Parent then return end
 			if not selected or not selected.PrimaryPart then return end
 			light.CFrame = CFrame.new(
@@ -170,7 +199,8 @@ local function runFocusCycle()
 			)
 		end)
 
-		task.wait(BURST_GROW_DURATION)
+		-- wait out burst grow duration
+		repeat task.wait(0.05) until elapsed >= BURST_GROW_DURATION or not isActive
 
 		trackConn:Disconnect()
 
@@ -179,29 +209,14 @@ local function runFocusCycle()
 			light:SetAttribute("Focused", nil)
 		end
 
-		-- apply trait after burst resolves
 		task.delay(0.1, function()
 			if selected and selected.Parent then
 				addBrazilTrait(selected)
 			end
 		end)
 
-		isTargeting = false
-	end
-end
-
--- ─── Random wander loop (runs between focus cycles) ───────────────────────────
-
-local function runWanderLoop()
-	while isActive do
-		if not isTargeting then
-			local light = getLightPart()
-			if light then
-				tweenLightTo(light, getRandomPosition())
-			end
-		else
-			task.wait(0.1)
-		end
+		-- cooldown before next pick
+		task.wait(math.random(ATTACK_COOLDOWN_MIN, ATTACK_COOLDOWN_MAX))
 	end
 end
 
@@ -211,10 +226,8 @@ local function main()
 	task.wait(ACTIVATION_DELAY)
 	if not isActive then return end
 
-	eventTrove:Add(task.spawn(runWanderLoop))
-	eventTrove:Add(task.spawn(runFocusCycle))
+	eventTrove:Add(task.spawn(mainLoop))
 
-	-- stay alive until event ends
 	while EventController:GetActiveEventData(EVENT_NAME) do
 		task.wait(1)
 	end
