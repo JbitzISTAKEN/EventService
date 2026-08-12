@@ -1,4 +1,4 @@
--- LocalScript: SummerHourLogic — Server/Controller Method
+-- LocalScript: SummerHourLogic
 -- StarterPlayerScripts
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -18,6 +18,8 @@ local SoundController  = require(ReplicatedStorage.Controllers.SoundController)
 local EVENT_NAME  = "Summer Hour"
 local EventScript = ReplicatedStorage.Controllers.EventController.Events[EVENT_NAME]
 
+local WANDER_FOLDER = workspace:WaitForChild("Events"):WaitForChild(EVENT_NAME)
+
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
 
 -- ─── State ────────────────────────────────────────────────────────────────────
@@ -32,10 +34,10 @@ local v6 = Spring.new(0)      v6.Speed = 3   v6.Damper = 0.4
 local v7 = Spring.new(0)      v7.Speed = 3   v7.Damper = 0.4
 local v8 = Spring.new(0)      v8.Speed = 3   v8.Damper = 0.4
 
-local sunScale  = 0.25
-local sunYaw    = 0
-local sunRoll   = 0
-local isAiming  = false
+local sunScale = 0.25
+local sunYaw   = 0
+local sunRoll  = 0
+local isAiming = false
 
 local sunModel: Model?           = nil
 local sunHome:  CFrame?          = nil
@@ -124,7 +126,7 @@ local function fireProjectile(animal: Instance): number
 	clone.Parent = workspace
 
 	local animator = clone:FindFirstChildWhichIsA("Animator", true)
-	local idleAnim = EventScript:FindFirstChild("IdleAnimation")
+	local idleAnim = EventScript.IdleAnimation
 	if animator and idleAnim and idleAnim:IsA("Animation") then
 		local track = animator:LoadAnimation(idleAnim)
 		track.Looped = true
@@ -297,13 +299,7 @@ end
 -- ─── Main ─────────────────────────────────────────────────────────────────────
 
 local function main()
-	local folder = workspace.Events:FindFirstChild(EVENT_NAME)
-	while not (folder and folder:FindFirstChild("SunTrait")) do
-		task.wait(0.1)
-		folder = workspace.Events:FindFirstChild(EVENT_NAME)
-	end
-
-	sunModel = folder:FindFirstChild("SunTrait")
+	sunModel = WANDER_FOLDER:WaitForChild("SunTrait")
 
 	local homeAttr = sunModel:GetAttribute("Home")
 	sunHome = typeof(homeAttr) == "CFrame" and homeAttr or sunModel:GetPivot()
@@ -311,7 +307,7 @@ local function main()
 	print("[SummerHour] Ready — sunHome:", sunHome)
 
 	local animator = sunModel:FindFirstChildWhichIsA("Animator", true)
-	local idleAnim = EventScript:FindFirstChild("IdleAnimation")
+	local idleAnim = EventScript.IdleAnimation
 	if animator and idleAnim and idleAnim:IsA("Animation") then
 		local track = animator:LoadAnimation(idleAnim)
 		track.Looped = true
@@ -339,7 +335,11 @@ local function main()
 	isActive  = false
 	isRunning = false
 
-	-- Server/controller method: don't touch the model, client cleans only what it owns
+	if sunModel and sunModel.Parent then
+		sunModel.RootPart.CFrame = CFrame.new(9999, 9999, 9999)
+		sunModel = nil
+	end
+
 	eventTrove:Destroy()
 	table.clear(recentlyTargeted)
 
