@@ -19,7 +19,9 @@ local EventScript   = ReplicatedStorage.Controllers.EventController.Events.Mygam
 local Mygame43Model = ReplicatedStorage:WaitForChild("Models").Events.Mygame43.mygame43
 local Sounds        = ReplicatedStorage.Sounds.Events.Mygame43
 
--- No remote dependency — startedAt anchored to now
+-- Gate: same pattern as Starfall and 4th of July
+repeat task.wait() until ReplicatedStorage:GetAttribute("Mygame43")
+
 local startedAt = workspace:GetServerTimeNow()
 
 local function timeLeftFor(t)
@@ -41,12 +43,10 @@ local recentlyHit = {}
 
 local v22 = Mygame43Model:Clone()
 v22.Parent = workspace
-v22:AddTag("Mygame43")
 trove:Add(v22)
 
 Sounds.Appear:Play()
 
--- Blink is a STOP effect — trove fires it on cleanup only
 trove:Add(function()
 	EffectController:Activate("Blink")
 end)
@@ -70,11 +70,9 @@ local animator = v22.Humanoid and v22.Humanoid.Animator
 if animator then
 	local idle  = animator:LoadAnimation(EventScript.Idle)
 	local spawn = animator:LoadAnimation(EventScript.Spawn)
-
 	idle:Play()
 	spawn:Play()
 	spawn.TimePosition = math.max(0, 7 - timeLeftFor(7))
-
 	trove:Add(function()
 		idle:Stop()
 		spawn:Stop()
@@ -92,21 +90,15 @@ trove:Add(task.delay(math.max(0, timeLeftFor(7.7)), function()
 		)
 		local anchorCF = v22.HumanoidRootPart.CFrame * offsetCF
 		local orb = trove:Clone(EventScript.Orb)
-
 		orb.CFrame = anchorCF - Vector3.new(0, 100, 0)
 		orb.Parent = workspace
 		trove:Add(function() Spr.stop(orb) end)
 
 		local floatSpeed = Random.new():NextNumber(2, 3)
-
 		trove:Add(RunService.PostSimulation:Connect(function()
 			debug.profilebegin("Mygame43:FloatOrb")
 			Spr.target(orb, 0.8, 1, {
-				Pivot = anchorCF + Vector3.new(
-					0,
-					math.sin((os.clock() + i * 90) * floatSpeed) * 4,
-					0
-				),
+				Pivot = anchorCF + Vector3.new(0, math.sin((os.clock() + i * 90) * floatSpeed) * 4, 0),
 			})
 			debug.profileend()
 		end))
@@ -198,24 +190,15 @@ local function fireOrb(seed, orbIndex, targetPos, flightDuration, didHit)
 			local strike = didHit
 				and EventScript.StrikeBrainrot:Clone()
 				or  EventScript.Strike:Clone()
-
 			strike.Position = targetPos
 			strike.Parent   = workspace
 			VFX.emit(strike)
 			task.delay(4, function() strike:Destroy() end)
 
 			if didHit then
-				SoundController:PlaySound(
-					ReplicatedStorage.Sounds.Events["Los Matteos"].Hit,
-					targetPos,
-					false
-				)
+				SoundController:PlaySound(ReplicatedStorage.Sounds.Events["Los Matteos"].Hit, targetPos, false)
 			else
-				SoundController:PlaySound(
-					Sounds.OrbHitNothing,
-					targetPos,
-					false
-				)
+				SoundController:PlaySound(Sounds.OrbHitNothing, targetPos, false)
 			end
 		end
 
@@ -257,16 +240,13 @@ local function pickTarget()
 		end
 
 		if #candidates > 0 then
-			local animal   = candidates[math.random(1, #candidates)]
-			local flight   = Random.new():NextNumber(1.5, 2.5)
-			local vel      = Vector3.zero
-
+			local animal  = candidates[math.random(1, #candidates)]
+			local flight  = Random.new():NextNumber(1.5, 2.5)
+			local vel     = Vector3.zero
 			if animal.PrimaryPart:IsA("BasePart") then
 				vel = animal.PrimaryPart.AssemblyLinearVelocity
 			end
-
 			local predicted = animal.PrimaryPart.Position + vel * flight
-
 			if SharedEventUtils.isPointInCarpet(predicted) then
 				recentlyHit[animal.Name] = workspace:GetServerTimeNow()
 				return predicted, flight, true
@@ -286,23 +266,19 @@ local function pickTarget()
 	return nil, nil, false
 end
 
--- ─── Main loop (fully local, no remotes) ─────────────────────────────────────
+-- ─── Main loop ────────────────────────────────────────────────────────────────
 
 local function loop()
 	local gate = timeLeftFor(7.7)
 	if gate > 0 then task.wait(gate) end
 
-	-- Loop condition is time-based since there's no EventController to poll
-	-- Replace the duration value (120) with however long the phase actually runs
-	local endTime = startedAt + 120
-
-	while workspace:GetServerTimeNow() < endTime do
+	while ReplicatedStorage:GetAttribute("Mygame43") do
 		task.wait(Random.new():NextNumber(2, 4))
-		if workspace:GetServerTimeNow() >= endTime then break end
+		if not ReplicatedStorage:GetAttribute("Mygame43") then break end
 
 		local numBalls = math.random(1, 2)
 		for i = 1, numBalls do
-			if workspace:GetServerTimeNow() >= endTime then break end
+			if not ReplicatedStorage:GetAttribute("Mygame43") then break end
 
 			local targetPos, flightDuration, didHit = pickTarget()
 			if targetPos then
@@ -315,12 +291,8 @@ local function loop()
 		end
 	end
 
-	-- Cleanup
 	trove:Destroy()
 	recentlyHit = {}
-	for _, obj in ipairs(CollectionService:GetTagged("Mygame43")) do
-		obj:Destroy()
-	end
 end
 
 task.spawn(loop)
