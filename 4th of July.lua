@@ -2,15 +2,16 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService      = game:GetService("TweenService")
 local RunService        = game:GetService("RunService")
 
-local VFX              = require(ReplicatedStorage.Shared.VFX)
-local SoundController  = require(ReplicatedStorage.Controllers.SoundController)
-local MathUtils        = require(ReplicatedStorage.Utils.MathUtils)
+local VFX             = require(ReplicatedStorage.Shared.VFX)
+local SoundController = require(ReplicatedStorage.Controllers.SoundController)
+local MathUtils       = require(ReplicatedStorage.Utils.MathUtils)
 local SharedEventUtils = require(ReplicatedStorage.Shared.SharedEventUtils)
+local EventController = require(ReplicatedStorage.Controllers.EventController)
 
 local EventAssets = ReplicatedStorage.Controllers.EventController.Events["4th of July"]
 local Sounds      = ReplicatedStorage.Sounds.Events["4th of July"]
 
-repeat task.wait() until ReplicatedStorage:GetAttribute("4thOfJulyEvent")
+repeat task.wait() until EventController:GetActiveEventData("4th of July")
 
 local RayParams = RaycastParams.new()
 RayParams.FilterType = Enum.RaycastFilterType.Include
@@ -116,7 +117,7 @@ local function onRise()
     print("[4thJuly] All launchers have risen!")
 
     task.spawn(function()
-        while ReplicatedStorage:GetAttribute("4thOfJulyEvent") do
+        while EventController:GetActiveEventData("4th of July") do
             for _ = 1, math.random(1, 3) do
                 fireOne(launchers[math.random(1, #launchers)])
             end
