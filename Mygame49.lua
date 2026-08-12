@@ -21,7 +21,6 @@ local EventScript   = ReplicatedStorage.Controllers.EventController.Events.Mygam
 local Mygame43Model = ReplicatedStorage:WaitForChild("Models").Events.Mygame43.mygame43
 local Sounds        = ReplicatedStorage.Sounds.Events.Mygame43
 
--- gate exactly like Starfall and 4th of July
 repeat task.wait() until EventController:GetActiveEventData("Mygame43")
 
 local eventData = EventController:GetActiveEventData("Mygame43")
@@ -122,14 +121,16 @@ trove:Add(Observers.observeTag("Mygame43", function(model)
 
     -- VFX + camera focus at 3.7s
     trove:Add(task.delay(math.max(0, timeLeftFor(3.7)), function()
+        if not v22 then return end
         VFX.enable(v22)
 
         local focusConn = RunService.PreRender:Connect(function(dt)
             debug.profilebegin("Mygame43:Focus")
+            if not v22 or not v22.Parent then return end
             local cf = workspace.CurrentCamera.CFrame
             workspace.CurrentCamera.CFrame = cf:Lerp(
                 CFrame.lookAt(cf.Position, v22:GetPivot().Position),
-                dt ^ 0.45
+                math.clamp(dt ^ 0.45, 0, 0.1)
             )
             debug.profileend()
         end)
