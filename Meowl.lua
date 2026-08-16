@@ -20,7 +20,7 @@ local MeowlAssets = ReplicatedStorage:WaitForChild("Controllers")
     :WaitForChild("Meowl")
 
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
-repeat task.wait() until ReplicatedStorage:GetAttribute("MeowlEvent")
+task.wait(2)
 
 local sessionTrove      = Trove.new()
 local spawnedMeowls     = {}
@@ -38,7 +38,6 @@ for _, obj in objects do
 end
 
 local meowlsFolder = workspace:WaitForChild("Meowls")
-repeat task.wait() until #meowlsFolder:GetChildren() > 0
 
 for _, part in ipairs(meowlsFolder:GetChildren()) do
     if part:IsA("BasePart") then
@@ -116,6 +115,7 @@ local function doBurst(target)
     if burst:IsA("BasePart") then
         burst.CFrame = CFrame.new(target.PrimaryPart.Position)
     end
+    -- enable all particles/beams inside
     for _, v in ipairs(burst:GetDescendants()) do
         if v:IsA("ParticleEmitter") then
             v.Enabled = true
