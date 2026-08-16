@@ -10,13 +10,45 @@ local Observers       = require(Packages.Observers)
 local Spr             = require(Packages.Spr)
 local Trove           = require(ReplicatedStorage.Packages.Trove)
 local EventController = require(ReplicatedStorage.Controllers.EventController)
+local EffectController = require(ReplicatedStorage.Controllers.EffectController)
 local SharedAnimals   = require(ReplicatedStorage.Shared.Animals)
 
 local LocalPlayer = Players.LocalPlayer
 local EVENT_NAME  = "Trick or Treat"
 
--- ─── Gate: same as Easter ─────────────────────────────────────────────────────
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
+
+-- ─── Blink gate — same pattern as Meowl ──────────────────────────────────────
+repeat task.wait() until EventController.Events and EventController.Events[EVENT_NAME]
+
+local totOnStartRunning = false
+local totModule         = EventController.Events[EVENT_NAME]
+local originalOnStart   = totModule.OnStart
+
+totModule.OnStart = function(self, ...)
+    totOnStartRunning = true
+    local results = { originalOnStart(self, ...) }
+    totOnStartRunning = false
+    return table.unpack(results)
+end
+
+local blinkFired       = Instance.new("BindableEvent")
+local originalActivate = EffectController.Activate
+
+EffectController.Activate = function(self, effectName, ...)
+    if effectName == "Blink" and totOnStartRunning then
+        blinkFired:Fire()
+    end
+    return originalActivate(self, effectName, ...)
+end
+
+blinkFired.Event:Wait()
+blinkFired:Destroy()
+
+EffectController.Activate = originalActivate
+totModule.OnStart         = originalOnStart
+
+-- ─── Everything below runs after blink ───────────────────────────────────────
 
 local startedAt  = EventController:GetActiveEventData(EVENT_NAME).startedAt
 local eventTrove = Trove.new()
@@ -126,7 +158,6 @@ local RETURN_SPEED    = 10
 local CHASE_REACH     = 3
 local POST_HIT_WAIT   = 1.5
 
--- pumpkin folder tied directly into eventTrove — Destroy() kills it instantly
 local pumpkinFolder = Instance.new("Folder")
 pumpkinFolder.Name   = "TrickOrTreatPumpkins"
 pumpkinFolder.Parent = workspace
@@ -155,7 +186,7 @@ for i = 1, NUM_PUMPKINS do
     p.CanCollide   = false
     p.CanQuery     = false
     p.Transparency = 1
-    p.Parent       = pumpkinFolder  -- child of folder, dies with it
+    p.Parent       = pumpkinFolder
     p:SetAttribute("Scale", 1)
     CollectionService:AddTag(p, "TrickOrTreatEventPumpkin")
 
@@ -420,7 +451,7 @@ eventTrove:Add(ProximityPromptService.PromptTriggered:Connect(function(prompt, p
     prompt.Enabled = true
 end))
 
--- ─── Main — exact Easter pattern ─────────────────────────────────────────────
+-- ─── Main ─────────────────────────────────────────────────────────────────────
 local function main()
     eventTrove:Add(task.spawn(function()
         local gate = timeLeftFor(0)
@@ -465,7 +496,6 @@ local function main()
         end
     end))
 
-    -- exact Easter expiry pattern — poll exits the frame GetActiveEventData returns nil
     while EventController:GetActiveEventData(EVENT_NAME) do task.wait() end
 
     isActive = false
