@@ -1,4 +1,4 @@
-print("broski iz ")
+print("DEAHT")
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
@@ -152,7 +152,7 @@ end
 
 local function startSpawner()
     local objects = game:GetObjects("rbxassetid://139716127145162")
-    for _, obj in objects do
+    for _, obj in ipairs(objects) do
         obj.Name   = "Meowls"
         obj.Parent = workspace
         sessionTrove:Add(obj)
@@ -233,7 +233,6 @@ local function startSpawner()
     end))
 end
 
--- Blink from Meowl's OnStart is the trigger — intercept it, spawn once, restore immediately
 local origActivate = EffectController.Activate
 local spawned = false
 
