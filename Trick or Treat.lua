@@ -16,21 +16,27 @@ local SharedAnimals   = require(ReplicatedStorage.Shared.Animals)
 local LocalPlayer = Players.LocalPlayer
 local EVENT_NAME  = "Trick or Treat"
 
--- ─── Gate: same as Easter ─────────────────────────────────────────────────────
+-- ─── Gate: wait for event data ─────────────────────────────────────────────
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
 
--- ─── Patch EffectController.Activate to detect "Blink" ─────────────────────
+-- ─── Patch EffectController.Activate – only count "Blink" if it's for Trick or Treat ──
 local blinkDetected = false
 local originalActivate = EffectController.Activate
 
 EffectController.Activate = function(self, effectName, ...)
     if effectName == "Blink" then
-        blinkDetected = true
+        local args = {...}
+        for _, arg in ipairs(args) do
+            if arg == EVENT_NAME then  -- "Trick or Treat"
+                blinkDetected = true
+                break
+            end
+        end
     end
     return originalActivate(self, effectName, ...)
 end
 
--- ─── Wait for the first Blink ──────────────────────────────────────────────
+-- ─── Wait for that specific Blink ──────────────────────────────────────────
 repeat task.wait() until blinkDetected
 
 -- ─── Now set up everything (pumpkins, houses, etc.) ──────────────────────
