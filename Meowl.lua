@@ -30,19 +30,15 @@ meowlsFolder.Parent = workspace
 
 local objects = game:GetObjects("rbxassetid://139716127145162")
 for _, obj in objects do
-    if obj:IsA("BasePart") or obj:IsA("Model") then
-        local clone = obj:Clone()
-        clone.Parent = meowlsFolder
-        clone:SetAttribute("Flying", false)
-        clone:SetAttribute("Attack", false)
-        if clone:IsA("BasePart") then
-            originalPositions[clone] = clone.CFrame
-            table.insert(spawnedMeowls, clone)
-        elseif clone:IsA("Model") and clone.PrimaryPart then
-            originalPositions[clone] = clone:GetPivot()
-            table.insert(spawnedMeowls, clone)
-        end
+    obj.Parent = meowlsFolder
+    obj:SetAttribute("Flying", false)
+    obj:SetAttribute("Attack", false)
+    if obj:IsA("BasePart") then
+        originalPositions[obj] = obj.CFrame
+    elseif obj:IsA("Model") and obj.PrimaryPart then
+        originalPositions[obj] = obj:GetPivot()
     end
+    table.insert(spawnedMeowls, obj)
 end
 
 -- ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -88,18 +84,18 @@ end
 local function doBurst(target)
     if not target or not target.PrimaryPart then return end
     local part = Instance.new("Part")
-    part.Size        = Vector3.new(6, 6, 6)
-    part.Shape       = Enum.PartType.Ball
-    part.Anchored    = true
-    part.CanCollide  = false
+    part.Size         = Vector3.new(6, 6, 6)
+    part.Shape        = Enum.PartType.Ball
+    part.Anchored     = true
+    part.CanCollide   = false
     part.Transparency = 0.3
-    part.BrickColor  = BrickColor.new("Bright violet")
-    part.Material    = Enum.Material.Neon
-    part.CFrame      = CFrame.new(target.PrimaryPart.Position)
-    part.Parent      = workspace
-    sessionTrove:Add(task.delay(BURST_DURATION, function()
+    part.BrickColor   = BrickColor.new("Bright violet")
+    part.Material     = Enum.Material.Neon
+    part.CFrame       = CFrame.new(target.PrimaryPart.Position)
+    part.Parent       = workspace
+    task.delay(BURST_DURATION, function()
         if part and part.Parent then part:Destroy() end
-    end))
+    end)
 end
 
 -- ─── Fly to target ────────────────────────────────────────────────────────────
@@ -111,9 +107,9 @@ local function flyToTarget(meowl, target)
     setAttr(meowl, "Flying", true)
 
     while isActive and meowl.Parent and target and target.Parent and target.PrimaryPart do
-        local targetPos = target.PrimaryPart.Position + Vector3.new(0, 10, 0)
+        local targetPos  = target.PrimaryPart.Position + Vector3.new(0, 10, 0)
         local currentPos = getPivotPos(meowl)
-        local distance = (targetPos - currentPos).Magnitude
+        local distance   = (targetPos - currentPos).Magnitude
 
         if distance < REACH_DIST then
             setAttr(meowl, "Flying", false)
@@ -194,7 +190,7 @@ local function selectTarget()
            available[math.random(1, #available)]
 end
 
--- ─── Attack loop ─────────────────────────────────────────────────────────────
+-- ─── Attack loop ──────────────────────────────────────────────────────────────
 
 sessionTrove:Add(task.spawn(function()
     while isActive do
@@ -223,7 +219,7 @@ end))
 -- ─── Shutdown when event ends ─────────────────────────────────────────────────
 
 sessionTrove:Add(task.spawn(function()
-    while EventController:GetActiveEventData(EVENT_NAME) do task.wait() end
+    while EventController:GetActiveEventData(EVENT_NAME) do task.wait(1) end
     isActive = false
     sessionTrove:Destroy()
     table.clear(spawnedMeowls)
