@@ -1,9 +1,9 @@
 if not game:IsLoaded() then game.Loaded:Wait() end
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local CollectionService = game:GetService("CollectionService")
-local RunService        = game:GetService("RunService")
-local Debris            = game:GetService("Debris")
+local ReplicatedStorage  = game:GetService("ReplicatedStorage")
+local CollectionService  = game:GetService("CollectionService")
+local RunService         = game:GetService("RunService")
+local Debris             = game:GetService("Debris")
 
 local Trove           = require(ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Trove"))
 local EventController = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("EventController"))
@@ -22,40 +22,80 @@ local MeowlAssets = ReplicatedStorage:WaitForChild("Controllers")
     :WaitForChild("Meowl")
 
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
-
--- wait for Meowl module to be loaded
 repeat task.wait() until EventController.Events and EventController.Events.Meowl
 
--- hook OnStart to know when blink fires
-local meowlOnStartRunning = false
+-- ─── Guard against stale hooks from a prior execute ──────────────────────────
+-- If EffectController.Activate is already one of our wrappers, unwrap it first
+-- so we're always patching the real method, never a closure wrapping a closure.
+if _G.MeowlHookState then
+    local prev = _G.MeowlHookState
+    if prev.origActivate then
+        EffectController.Activate = prev.origActivate
+    end
+    if prev.origOnStart and prev.meowlModule then
+        prev.meowlModule.OnStart = prev.origOnStart
+    end
+    if prev.blinkFired and prev.blinkFired.Parent then
+        prev.blinkFired:Destroy()
+    end
+    _G.MeowlHookState = nil
+end
+
 local meowlModule = EventController.Events.Meowl
-local originalOnStart = meowlModule.OnStart
+
+-- snapshot the raw originals NOW, after any prior unwrap
+local origOnStart  = meowlModule.OnStart
+local origActivate = EffectController.Activate
+
+-- store for next execute's cleanup
+_G.MeowlHookState = {
+    origActivate = origActivate,
+    origOnStart  = origOnStart,
+    meowlModule  = meowlModule,
+    blinkFired   = nil, -- filled below
+}
+
+-- ─── Hook OnStart ─────────────────────────────────────────────────────────────
+
+local meowlOnStartRunning = false
 
 meowlModule.OnStart = function(self, ...)
     meowlOnStartRunning = true
-    local results = { originalOnStart(self, ...) }
+    local results = { origOnStart(self, ...) }
     meowlOnStartRunning = false
     return table.unpack(results)
 end
 
--- hook EffectController.Activate to catch the blink
+-- ─── Hook EffectController.Activate ──────────────────────────────────────────
+
 local blinkFired = Instance.new("BindableEvent")
-local originalActivate = EffectController.Activate
+_G.MeowlHookState.blinkFired = blinkFired
+
+local blinkAlreadyFired = false
 
 EffectController.Activate = function(self, effectName, ...)
-    if effectName == "Blink" and meowlOnStartRunning then
+    if effectName == "Blink" and meowlOnStartRunning and not blinkAlreadyFired then
+        blinkAlreadyFired = true
         blinkFired:Fire()
     end
-    return originalActivate(self, effectName, ...)
+    return origActivate(self, effectName, ...)
 end
 
--- wait for blink
+-- ─── Wait for blink, then restore ────────────────────────────────────────────
+
 blinkFired.Event:Wait()
 blinkFired:Destroy()
+_G.MeowlHookState.blinkFired = nil
 
--- restore hooks
-EffectController.Activate = originalActivate
-meowlModule.OnStart = originalOnStart
+-- restore immediately — hooks served their purpose
+EffectController.Activate = origActivate
+meowlModule.OnStart       = origOnStart
+
+-- clear originals from state so a re-execute doesn't double-restore
+_G.MeowlHookState.origActivate = nil
+_G.MeowlHookState.origOnStart  = nil
+
+-- ─── Session state ────────────────────────────────────────────────────────────
 
 local sessionTrove      = Trove.new()
 local spawnedMeowls     = {}
@@ -63,7 +103,7 @@ local originalPositions = {}
 local recentlyTargeted  = {}
 local isActive          = true
 
--- ─── Load meowls folder from asset ───────────────────────────────────────────
+-- ─── Load meowls folder ───────────────────────────────────────────────────────
 
 local objects = game:GetObjects("rbxassetid://139716127145162")
 for _, obj in objects do
@@ -113,17 +153,11 @@ for _, part in ipairs(meowlsFolder:GetChildren()) do
         sessionTrove:Add(function() attackTrack:Stop(0) attackTrack:Destroy() end)
 
         sessionTrove:Add(part:GetAttributeChangedSignal("Flying"):Connect(function()
-            if part:GetAttribute("Flying") then
-                flyTrack:Play()
-            else
-                flyTrack:Stop()
-            end
+            if part:GetAttribute("Flying") then flyTrack:Play() else flyTrack:Stop() end
         end))
 
         sessionTrove:Add(part:GetAttributeChangedSignal("Attack"):Connect(function()
-            if part:GetAttribute("Attack") then
-                attackTrack:Play()
-            end
+            if part:GetAttribute("Attack") then attackTrack:Play() end
         end))
     end
 end
@@ -294,4 +328,6 @@ sessionTrove:Add(task.spawn(function()
     table.clear(spawnedMeowls)
     table.clear(originalPositions)
     table.clear(recentlyTargeted)
+    -- clear global so next execute starts completely fresh
+    _G.MeowlHookState = nil
 end))
