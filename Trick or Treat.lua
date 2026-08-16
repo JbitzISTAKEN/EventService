@@ -9,55 +9,39 @@ local Packages        = ReplicatedStorage:WaitForChild("Packages")
 local Observers       = require(Packages.Observers)
 local Spr             = require(Packages.Spr)
 local Trove           = require(ReplicatedStorage.Packages.Trove)
-local MathUtils       = require(ReplicatedStorage.Utils.MathUtils)
 local EventController = require(ReplicatedStorage.Controllers.EventController)
 local SharedAnimals   = require(ReplicatedStorage.Shared.Animals)
 
-do
-    local genUpvals = debug.getupvalues(SharedAnimals.GetGeneration)
-    debug.setupvalue(SharedAnimals.GetGeneration, 1, function() return genUpvals[2] end)
-end
-
 local LocalPlayer = Players.LocalPlayer
-local eventName   = "Trick or Treat"
-local eventTrove  = Trove.new()
+local EVENT_NAME  = "Trick or Treat"
 
-repeat task.wait() until EventController:GetActiveEventData(eventName)
-local startedAt = EventController:GetActiveEventData(eventName).startedAt
+-- ─── Gate: same as Easter ─────────────────────────────────────────────────────
+repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
+
+local startedAt  = EventController:GetActiveEventData(EVENT_NAME).startedAt
+local eventTrove = Trove.new()
+local isActive   = true
 
 local function timeLeftFor(t)
     return startedAt + t - workspace:GetServerTimeNow()
 end
 
-local EventScript   = ReplicatedStorage.Controllers.EventController.Events:WaitForChild(eventName)
-local Animations    = EventScript
-local HitAnimations = EventScript
-
+local EventScript  = ReplicatedStorage.Controllers.EventController.Events:WaitForChild(EVENT_NAME)
 local PumpkinModel = EventScript:WaitForChild("Pumpkin")
 local IdleAnim     = EventScript:WaitForChild("Idle")
 local MoveAnim     = EventScript:WaitForChild("Move")
 
--- ─── Houses ──────────────────────────────────────────────────────────────────
-local Houses
-
+-- ─── Houses ───────────────────────────────────────────────────────────────────
 do
     local obj = game:GetObjects("rbxassetid://115610014866510")[1]
     if obj then
         obj.Name   = "Houses"
         obj.Parent = workspace
-        Houses     = obj
-    else
-        Houses = workspace:WaitForChild("Houses", 5)
+        eventTrove:Add(obj)
     end
 end
 
--- Cleanup is inside eventTrove — fires the moment eventTrove:Destroy() is called
-eventTrove:Add(function()
-    local h = workspace:FindFirstChild("Houses")
-    if h then h:Destroy() end
-end)
-
--- ─── Door spring ─────────────────────────────────────────────────────────────
+-- ─── Door spring ──────────────────────────────────────────────────────────────
 eventTrove:Add(Observers.observeTag("TrickOrTreatDoor", function(door)
     local originCF = door:GetPivot()
     return Observers.observeAttribute(door, "Open", function(open)
@@ -70,7 +54,7 @@ eventTrove:Add(Observers.observeTag("TrickOrTreatDoor", function(door)
     end)
 end))
 
--- ─── Pumpkin model attachment observer ──────────────────────────────────────
+-- ─── Pumpkin model observer ───────────────────────────────────────────────────
 eventTrove:Add(Observers.observeTag("TrickOrTreatEventPumpkin", function(part)
     local t   = Trove.new()
     local mdl = t:Clone(PumpkinModel)
@@ -102,7 +86,7 @@ eventTrove:Add(Observers.observeTag("TrickOrTreatEventPumpkin", function(part)
     return t:WrapClean()
 end, { workspace }))
 
--- ─── Ground sticking ─────────────────────────────────────────────────────────
+-- ─── Ground stick ─────────────────────────────────────────────────────────────
 local function stickToGround(position: Vector3): Vector3
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Include
@@ -111,11 +95,11 @@ local function stickToGround(position: Vector3): Vector3
         workspace.Terrain,
     }
     local result = workspace:Raycast(position + Vector3.new(0, 10, 0), Vector3.new(0, -20, 0), params)
-    return result and result.Position + Vector3.new(0, 1, 0) or position
+    return result and result.Position + Vector3.new(0, 0.5, 0) or position
 end
 
--- ─── Wander folder ───────────────────────────────────────────────────────────
-local WANDER_FOLDER = workspace:WaitForChild("Events"):WaitForChild(eventName)
+-- ─── Wander folder ────────────────────────────────────────────────────────────
+local WANDER_FOLDER = workspace:WaitForChild("Events"):WaitForChild(EVENT_NAME)
 
 local function getWanderParts(): { BasePart }
     local parts = {}
@@ -131,7 +115,7 @@ local function getRandomWanderPart(): BasePart?
     return parts[math.random(1, #parts)]
 end
 
--- ─── Pumpkin setup ───────────────────────────────────────────────────────────
+-- ─── Pumpkin constants ────────────────────────────────────────────────────────
 local NUM_PUMPKINS    = 12
 local WANDER_INTERVAL = 2.5
 local WANDER_CHANCE   = 0.65
@@ -142,16 +126,11 @@ local RETURN_SPEED    = 10
 local CHASE_REACH     = 3
 local POST_HIT_WAIT   = 1.5
 
+-- pumpkin folder tied directly into eventTrove — Destroy() kills it instantly
 local pumpkinFolder = Instance.new("Folder")
 pumpkinFolder.Name   = "TrickOrTreatPumpkins"
 pumpkinFolder.Parent = workspace
-
--- Folder cleanup lives in eventTrove — instant on Destroy
-eventTrove:Add(function()
-    if pumpkinFolder and pumpkinFolder.Parent then
-        pumpkinFolder:Destroy()
-    end
-end)
+eventTrove:Add(pumpkinFolder)
 
 local pumpkinParts = {}
 local pumpkinData  = {}
@@ -165,15 +144,8 @@ end
 for i = 1, NUM_PUMPKINS do
     local homePart = getRandomWanderPart()
     if not homePart then
-        warn("No wander parts found — using fallback.")
-        homePart = Instance.new("Part")
-        homePart.Size         = Vector3.new(50, 1, 50)
-        homePart.Anchored     = true
-        homePart.Transparency = 1
-        homePart.CanCollide   = false
-        homePart.CanQuery     = false
-        homePart.Position     = Vector3.new(0, 10, 0)
-        homePart.Parent       = pumpkinFolder
+        warn("No wander parts — skipping pumpkin " .. i)
+        continue
     end
 
     local p = Instance.new("Part")
@@ -183,7 +155,7 @@ for i = 1, NUM_PUMPKINS do
     p.CanCollide   = false
     p.CanQuery     = false
     p.Transparency = 1
-    p.Parent       = pumpkinFolder
+    p.Parent       = pumpkinFolder  -- child of folder, dies with it
     p:SetAttribute("Scale", 1)
     CollectionService:AddTag(p, "TrickOrTreatEventPumpkin")
 
@@ -198,7 +170,7 @@ for i = 1, NUM_PUMPKINS do
     pumpkinData[p] = { Home = homePart, IsMoving = false, MoveGen = 0 }
 end
 
--- ─── Wander ──────────────────────────────────────────────────────────────────
+-- ─── Wander ───────────────────────────────────────────────────────────────────
 local function wanderPumpkin(pumpkin)
     local data = pumpkinData[pumpkin]
     if not data or data.IsMoving or pTasks[pumpkin] then return end
@@ -218,18 +190,23 @@ local function wanderPumpkin(pumpkin)
     local direction = diff.Unit
     local duration  = distance / WANDER_SPEED
 
-    data.MoveGen  += 1
-    local myGen    = data.MoveGen
-    data.IsMoving  = true
+    data.MoveGen += 1
+    local myGen   = data.MoveGen
+    data.IsMoving = true
     pumpkin:SetAttribute("Moving", true)
 
     task.spawn(function()
         local elapsed = 0
-        while elapsed < duration and data.IsMoving and pumpkin and pumpkin.Parent and data.MoveGen == myGen do
+        while elapsed < duration and data.IsMoving and isActive
+            and pumpkin and pumpkin.Parent and data.MoveGen == myGen
+        do
             local dt = task.wait()
             elapsed += dt
             local alpha = math.clamp(elapsed / duration, 0, 1)
-            pumpkin.CFrame = CFrame.new(stickToGround(startPos:Lerp(targetPos, alpha)), startPos:Lerp(targetPos, alpha) + direction)
+            pumpkin.CFrame = CFrame.new(
+                stickToGround(startPos:Lerp(targetPos, alpha)),
+                startPos:Lerp(targetPos, alpha) + direction
+            )
         end
         if pumpkin and pumpkin.Parent and data.MoveGen == myGen then
             data.IsMoving = false
@@ -238,7 +215,7 @@ local function wanderPumpkin(pumpkin)
     end)
 end
 
--- ─── Return to home ──────────────────────────────────────────────────────────
+-- ─── Return home ──────────────────────────────────────────────────────────────
 local function returnToHome(pumpkin)
     local data = pumpkinData[pumpkin]
     if not data then return end
@@ -253,9 +230,9 @@ local function returnToHome(pumpkin)
         0,
         (math.random() - 0.5) * home.Size.Z
     )
-    local targetPos  = stickToGround(home.Position + offset)
+    local targetPos   = stickToGround(home.Position + offset)
     local returnTrove = Trove.new()
-    pTasks[pumpkin]  = returnTrove
+    pTasks[pumpkin]   = returnTrove
 
     returnTrove:Add(function()
         if pumpkin and pumpkin.Parent then
@@ -272,8 +249,6 @@ local function returnToHome(pumpkin)
         local dist = dir.Magnitude
         if dist < 0.5 then
             returnTrove:Clean()
-            data.IsMoving = false
-            pumpkin:SetAttribute("Moving", false)
             wanderPumpkin(pumpkin)
             return
         end
@@ -282,7 +257,7 @@ local function returnToHome(pumpkin)
     end)
 end
 
--- ─── Chase ───────────────────────────────────────────────────────────────────
+-- ─── Chase ────────────────────────────────────────────────────────────────────
 local function chaseAnimal(pumpkin, targetAnimal)
     local data = pumpkinData[pumpkin]
     if not data then return end
@@ -327,57 +302,12 @@ local function chaseAnimal(pumpkin, targetAnimal)
     end)
 end
 
--- ─── Main loops — both inside eventTrove ─────────────────────────────────────
-eventTrove:Add(task.spawn(function()
-    local gate = timeLeftFor(0)
-    if gate > 0 then task.wait(gate) end
-    while EventController:GetActiveEventData(eventName) do
-        task.wait(WANDER_INTERVAL)
-        for _, pumpkin in ipairs(pumpkinParts) do
-            local data = pumpkinData[pumpkin]
-            if data and not data.IsMoving and not pTasks[pumpkin] and math.random() < WANDER_CHANCE then
-                wanderPumpkin(pumpkin)
-            end
-        end
-    end
-end))
-
-eventTrove:Add(task.spawn(function()
-    local gate = timeLeftFor(0)
-    if gate > 0 then task.wait(gate) end
-    while EventController:GetActiveEventData(eventName) do
-        task.wait(CHASE_INTERVAL)
-        local freePumpkins = {}
-        for _, pumpkin in ipairs(pumpkinParts) do
-            local data = pumpkinData[pumpkin]
-            if data and not data.IsMoving and not pTasks[pumpkin] then
-                table.insert(freePumpkins, pumpkin)
-            end
-        end
-        if #freePumpkins == 0 then continue end
-
-        local animals    = CollectionService:GetTagged("Animal")
-        local candidates = {}
-        for _, animal in ipairs(animals) do
-            if animal.PrimaryPart and animal.PrimaryPart.Parent then
-                table.insert(candidates, animal)
-            end
-        end
-        if #candidates == 0 then continue end
-
-        chaseAnimal(
-            freePumpkins[math.random(1, #freePumpkins)],
-            candidates[math.random(1, #candidates)]
-        )
-    end
-end))
-
 -- ─── Candy screen effect ──────────────────────────────────────────────────────
 local function playScreenCandyEffect()
-    local rng       = Random.new()
+    local rng        = Random.new()
     local effectsGui = LocalPlayer.PlayerGui:FindFirstChild("Effects")
     if not effectsGui then return end
-    for i = 1, 20 do
+    for _ = 1, 20 do
         local img = EventScript:FindFirstChild("Image")
         if not img then break end
         local clone = img:Clone()
@@ -445,16 +375,16 @@ eventTrove:Add(ProximityPromptService.PromptTriggered:Connect(function(prompt, p
     task.wait(1)
 
     if isTreat then
-        local anim = Animations:FindFirstChild(animalName)
+        local anim = EventScript:FindFirstChild(animalName)
         if anim and animal:FindFirstChild("AnimationController") then
             local track = animal.AnimationController.Animator:LoadAnimation(anim)
             track:Play()
         end
 
-        local candySound    = Instance.new("Sound")
-        candySound.SoundId  = "rbxassetid://119143644355689"
-        candySound.Volume   = 0.5
-        candySound.Parent   = prmpt
+        local candySound   = Instance.new("Sound")
+        candySound.SoundId = "rbxassetid://119143644355689"
+        candySound.Volume  = 0.5
+        candySound.Parent  = prmpt
         candySound:Play()
         task.delay(2, function() candySound:Destroy() end)
 
@@ -467,17 +397,17 @@ eventTrove:Add(ProximityPromptService.PromptTriggered:Connect(function(prompt, p
         door:SetAttribute("Open", false)
         task.wait(2)
     else
-        local anim = HitAnimations:FindFirstChild(animalName)
-        if anim and animal:FindFirstChild("AnimationController") then
-            local track = animal.AnimationController.Animator:LoadAnimation(anim)
+        local hitAnim = EventScript.HitAnimations:FindFirstChild(animalName)
+        if hitAnim and animal:FindFirstChild("AnimationController") then
+            local track = animal.AnimationController.Animator:LoadAnimation(hitAnim)
             track:Play()
             task.delay(0.419, function() track:Stop() end)
         end
 
-        local hitSound    = Instance.new("Sound")
-        hitSound.SoundId  = "rbxassetid://128476264357679"
-        hitSound.Volume   = 0.5
-        hitSound.Parent   = prmpt
+        local hitSound   = Instance.new("Sound")
+        hitSound.SoundId = "rbxassetid://128476264357679"
+        hitSound.Volume  = 0.5
+        hitSound.Parent  = prmpt
         hitSound:Play()
         task.delay(2, function() hitSound:Destroy() end)
 
@@ -490,8 +420,62 @@ eventTrove:Add(ProximityPromptService.PromptTriggered:Connect(function(prompt, p
     prompt.Enabled = true
 end))
 
--- ─── Expiry — watcher is inside eventTrove so it dies with everything else ───
-eventTrove:Add(task.spawn(function()
-    while EventController:GetActiveEventData(eventName) do task.wait(1) end
+-- ─── Main — exact Easter pattern ─────────────────────────────────────────────
+local function main()
+    eventTrove:Add(task.spawn(function()
+        local gate = timeLeftFor(0)
+        if gate > 0 then task.wait(gate) end
+        while isActive do
+            task.wait(WANDER_INTERVAL)
+            for _, pumpkin in ipairs(pumpkinParts) do
+                local data = pumpkinData[pumpkin]
+                if data and not data.IsMoving and not pTasks[pumpkin] and math.random() < WANDER_CHANCE then
+                    wanderPumpkin(pumpkin)
+                end
+            end
+        end
+    end))
+
+    eventTrove:Add(task.spawn(function()
+        local gate = timeLeftFor(0)
+        if gate > 0 then task.wait(gate) end
+        while isActive do
+            task.wait(CHASE_INTERVAL)
+            local freePumpkins = {}
+            for _, pumpkin in ipairs(pumpkinParts) do
+                local data = pumpkinData[pumpkin]
+                if data and not data.IsMoving and not pTasks[pumpkin] then
+                    table.insert(freePumpkins, pumpkin)
+                end
+            end
+            if #freePumpkins == 0 then continue end
+
+            local candidates = {}
+            for _, animal in ipairs(CollectionService:GetTagged("Animal")) do
+                if animal.PrimaryPart and animal.PrimaryPart.Parent then
+                    table.insert(candidates, animal)
+                end
+            end
+            if #candidates == 0 then continue end
+
+            chaseAnimal(
+                freePumpkins[math.random(1, #freePumpkins)],
+                candidates[math.random(1, #candidates)]
+            )
+        end
+    end))
+
+    -- exact Easter expiry pattern — poll exits the frame GetActiveEventData returns nil
+    while EventController:GetActiveEventData(EVENT_NAME) do task.wait() end
+
+    isActive = false
+    for pumpkin, trove in pairs(pTasks) do
+        trove:Clean()
+        pTasks[pumpkin] = nil
+    end
+    table.clear(pumpkinParts)
+    table.clear(pumpkinData)
     eventTrove:Destroy()
-end))
+end
+
+task.spawn(main)
