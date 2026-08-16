@@ -1,4 +1,3 @@
-if not game:IsLoaded() then game.Loaded:Wait() end
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
