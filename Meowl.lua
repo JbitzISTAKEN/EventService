@@ -16,34 +16,42 @@ local ATTACK_COOLDOWN_MIN = 5
 local ATTACK_COOLDOWN_MAX = 10
 local BURST_DURATION      = 0.5
 
-local MeowlAssets = ReplicatedStorage:WaitForChild("Controllers")
-    :WaitForChild("EventController")
-    :WaitForChild("Events")
-    :WaitForChild("Meowl")
+-- ─── Patch EffectController to detect Blink caused by Meowl ────────────────
 
--- Wait until the event data is active
-repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
-
--- ─── Patch EffectController.Activate to detect "Blink" ─────────────────────
-local blinkDetected = false
-local originalActivate = EffectController.Activate
+local origActivate = EffectController.Activate
 
 EffectController.Activate = function(self, effectName, ...)
     if effectName == "Blink" then
-        blinkDetected = true
+        -- Check if the Meowl event is currently active
+        local activeEvents = EventController:GetActiveEvents()
+        for _, ev in ipairs(activeEvents) do
+            if ev.eventName == EVENT_NAME then
+                _G.MeowlBlinkOccurred = true   -- signal to the main script
+                break
+            end
+        end
     end
-    return originalActivate(self, effectName, ...)
+    return origActivate(self, effectName, ...)
 end
 
--- ─── Wait for the first Blink effect ──────────────────────────────────────
-repeat task.wait() until blinkDetected
+-- ─── Wait for event data, then wait for the Blink ──────────────────────────
 
--- ─── Now load the meowls (spawn them) ──────────────────────────────────────
+repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
+
+-- Reset the flag and wait until the Blink occurs (caused by Meowl)
+_G.MeowlBlinkOccurred = false
+repeat task.wait() until _G.MeowlBlinkOccurred
+
+-- Optional: clear the flag so it doesn't interfere later
+_G.MeowlBlinkOccurred = nil
+
 local sessionTrove      = Trove.new()
 local spawnedMeowls     = {}
 local originalPositions = {}
 local recentlyTargeted  = {}
 local isActive          = true
+
+-- ─── Load meowls folder from asset ───────────────────────────────────────────
 
 local objects = game:GetObjects("rbxassetid://139716127145162")
 for _, obj in objects do
@@ -62,6 +70,11 @@ for _, part in ipairs(meowlsFolder:GetChildren()) do
         part:SetAttribute("Attack", false)
         originalPositions[part] = part.CFrame
         table.insert(spawnedMeowls, part)
+
+        local MeowlAssets = ReplicatedStorage:WaitForChild("Controllers")
+            :WaitForChild("EventController")
+            :WaitForChild("Events")
+            :WaitForChild("Meowl")
 
         local visual = MeowlAssets:WaitForChild("Meowl"):Clone()
         visual.Parent = workspace
@@ -125,6 +138,10 @@ end
 
 local function doBurst(target)
     if not target or not target.PrimaryPart then return end
+    local MeowlAssets = ReplicatedStorage:WaitForChild("Controllers")
+        :WaitForChild("EventController")
+        :WaitForChild("Events")
+        :WaitForChild("Meowl")
     local burst = MeowlAssets:WaitForChild("Burst"):Clone()
     burst.Parent = target.PrimaryPart
     if burst:IsA("BasePart") then
