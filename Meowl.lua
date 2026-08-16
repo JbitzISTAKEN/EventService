@@ -1,4 +1,4 @@
-print("DEAHT")
+print("broski iz ")
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
@@ -7,6 +7,7 @@ local Debris            = game:GetService("Debris")
 
 local Trove            = require(ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Trove"))
 local EventController  = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("EventController"))
+local EffectController = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("EffectController"))
 
 local EVENT_NAME          = "Meowl"
 local FLY_SPEED           = 50
@@ -21,70 +22,12 @@ local MeowlAssets = ReplicatedStorage:WaitForChild("Controllers")
     :WaitForChild("Meowl")
 
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
-repeat task.wait() until ReplicatedStorage:GetAttribute("MeowlEvent")
 
 local sessionTrove      = Trove.new()
 local spawnedMeowls     = {}
 local originalPositions = {}
 local recentlyTargeted  = {}
 local isActive          = true
-
-local objects = game:GetObjects("rbxassetid://139716127145162")
-for _, obj in objects do
-    obj.Name   = "Meowls"
-    obj.Parent = workspace
-    sessionTrove:Add(obj)
-end
-
-local meowlsFolder = workspace:WaitForChild("Meowls")
-repeat task.wait() until #meowlsFolder:GetChildren() > 0
-
-for _, part in ipairs(meowlsFolder:GetChildren()) do
-    if part:IsA("BasePart") then
-        part.Anchored   = true
-        part.CanCollide = false
-        part:SetAttribute("Flying", false)
-        part:SetAttribute("Attack", false)
-        originalPositions[part] = part.CFrame
-        table.insert(spawnedMeowls, part)
-
-        local visual = MeowlAssets:WaitForChild("Meowl"):Clone()
-        visual.Parent = workspace
-        sessionTrove:Add(visual)
-
-        local weld = Instance.new("Weld")
-        weld.Part0  = visual.PrimaryPart
-        weld.Part1  = part
-        weld.C0     = visual.PrimaryPart.PivotOffset
-        weld.Parent = visual.PrimaryPart
-
-        local animator = visual.AnimationController.Animator
-
-        local idleTrack = animator:LoadAnimation(MeowlAssets:WaitForChild("Idle"))
-        idleTrack.Priority = Enum.AnimationPriority.Idle
-        idleTrack.Looped   = true
-        idleTrack:Play()
-        sessionTrove:Add(function() idleTrack:Stop(0) idleTrack:Destroy() end)
-
-        local flyTrack = animator:LoadAnimation(MeowlAssets:WaitForChild("Fly"))
-        flyTrack.Priority = Enum.AnimationPriority.Action
-        flyTrack.Looped   = true
-        sessionTrove:Add(function() flyTrack:Stop(0) flyTrack:Destroy() end)
-
-        local attackTrack = animator:LoadAnimation(MeowlAssets:WaitForChild("Attack"))
-        attackTrack.Priority = Enum.AnimationPriority.Action2
-        attackTrack.Looped   = false
-        sessionTrove:Add(function() attackTrack:Stop(0) attackTrack:Destroy() end)
-
-        sessionTrove:Add(part:GetAttributeChangedSignal("Flying"):Connect(function()
-            if part:GetAttribute("Flying") then flyTrack:Play() else flyTrack:Stop() end
-        end))
-
-        sessionTrove:Add(part:GetAttributeChangedSignal("Attack"):Connect(function()
-            if part:GetAttribute("Attack") then attackTrack:Play() end
-        end))
-    end
-end
 
 local function getAnimals()
     return CollectionService:GetTagged("Animal")
@@ -207,29 +150,104 @@ local function selectTarget()
            available[math.random(1, #available)]
 end
 
-sessionTrove:Add(task.spawn(function()
-    while isActive do
-        task.wait(math.random(ATTACK_COOLDOWN_MIN, ATTACK_COOLDOWN_MAX))
-        if not isActive then break end
-
-        local animal, meowl = selectTarget()
-        if not animal or not meowl then continue end
-
-        recentlyTargeted[animal.Name] = workspace:GetServerTimeNow()
-
-        task.spawn(function()
-            local reached = flyToTarget(meowl, animal)
-            if reached then
-                setAttr(meowl, "Attack", true)
-                doBurst(animal)
-                task.wait(BURST_DURATION)
-                setAttr(meowl, "Attack", false)
-                task.wait(0.5)
-            end
-            flyBack(meowl)
-        end)
+local function startSpawner()
+    local objects = game:GetObjects("rbxassetid://139716127145162")
+    for _, obj in objects do
+        obj.Name   = "Meowls"
+        obj.Parent = workspace
+        sessionTrove:Add(obj)
     end
-end))
+
+    local meowlsFolder = workspace:WaitForChild("Meowls")
+    repeat task.wait() until #meowlsFolder:GetChildren() > 0
+
+    for _, part in ipairs(meowlsFolder:GetChildren()) do
+        if part:IsA("BasePart") then
+            part.Anchored   = true
+            part.CanCollide = false
+            part:SetAttribute("Flying", false)
+            part:SetAttribute("Attack", false)
+            originalPositions[part] = part.CFrame
+            table.insert(spawnedMeowls, part)
+
+            local visual = MeowlAssets:WaitForChild("Meowl"):Clone()
+            visual.Parent = workspace
+            sessionTrove:Add(visual)
+
+            local weld = Instance.new("Weld")
+            weld.Part0  = visual.PrimaryPart
+            weld.Part1  = part
+            weld.C0     = visual.PrimaryPart.PivotOffset
+            weld.Parent = visual.PrimaryPart
+
+            local animator = visual.AnimationController.Animator
+
+            local idleTrack = animator:LoadAnimation(MeowlAssets:WaitForChild("Idle"))
+            idleTrack.Priority = Enum.AnimationPriority.Idle
+            idleTrack.Looped   = true
+            idleTrack:Play()
+            sessionTrove:Add(function() idleTrack:Stop(0) idleTrack:Destroy() end)
+
+            local flyTrack = animator:LoadAnimation(MeowlAssets:WaitForChild("Fly"))
+            flyTrack.Priority = Enum.AnimationPriority.Action
+            flyTrack.Looped   = true
+            sessionTrove:Add(function() flyTrack:Stop(0) flyTrack:Destroy() end)
+
+            local attackTrack = animator:LoadAnimation(MeowlAssets:WaitForChild("Attack"))
+            attackTrack.Priority = Enum.AnimationPriority.Action2
+            attackTrack.Looped   = false
+            sessionTrove:Add(function() attackTrack:Stop(0) attackTrack:Destroy() end)
+
+            sessionTrove:Add(part:GetAttributeChangedSignal("Flying"):Connect(function()
+                if part:GetAttribute("Flying") then flyTrack:Play() else flyTrack:Stop() end
+            end))
+
+            sessionTrove:Add(part:GetAttributeChangedSignal("Attack"):Connect(function()
+                if part:GetAttribute("Attack") then attackTrack:Play() end
+            end))
+        end
+    end
+
+    sessionTrove:Add(task.spawn(function()
+        while isActive do
+            task.wait(math.random(ATTACK_COOLDOWN_MIN, ATTACK_COOLDOWN_MAX))
+            if not isActive then break end
+
+            local animal, meowl = selectTarget()
+            if not animal or not meowl then continue end
+
+            recentlyTargeted[animal.Name] = workspace:GetServerTimeNow()
+
+            task.spawn(function()
+                local reached = flyToTarget(meowl, animal)
+                if reached then
+                    setAttr(meowl, "Attack", true)
+                    doBurst(animal)
+                    task.wait(BURST_DURATION)
+                    setAttr(meowl, "Attack", false)
+                    task.wait(0.5)
+                end
+                flyBack(meowl)
+            end)
+        end
+    end))
+end
+
+-- Blink from Meowl's OnStart is the trigger — intercept it, spawn once, restore immediately
+local origActivate = EffectController.Activate
+local spawned = false
+
+EffectController.Activate = function(self, name, ...)
+    if name == "Blink" and not spawned then
+        local trace = debug.traceback(nil, 2)
+        if trace:match("Events%.Meowl:") then
+            spawned = true
+            EffectController.Activate = origActivate
+            task.spawn(startSpawner)
+        end
+    end
+    return origActivate(self, name, ...)
+end
 
 sessionTrove:Add(task.spawn(function()
     while EventController:GetActiveEventData(EVENT_NAME) do task.wait() end
