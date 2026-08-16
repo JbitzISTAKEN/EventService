@@ -31,68 +31,58 @@ for _, obj in objects do
     obj.Name   = "Meowls"
     obj.Parent = workspace
     sessionTrove:Add(obj)
+end
 
-    for _, part in ipairs(obj:GetChildren()) do
-        if part:IsA("BasePart") then
-            part.Anchored   = true
-            part.CanCollide = false
-            part:SetAttribute("Flying", false)
-            part:SetAttribute("Attack", false)
-            originalPositions[part] = part.CFrame
-            table.insert(spawnedMeowls, part)
+for _, part in ipairs(workspace.Meowls:GetChildren()) do
+    if part:IsA("BasePart") then
+        part.Anchored   = true
+        part.CanCollide = false
+        part:SetAttribute("Flying", false)
+        part:SetAttribute("Attack", false)
+        originalPositions[part] = part.CFrame
+        table.insert(spawnedMeowls, part)
 
-            -- clone real meowl visual and weld to anchor
-            local visual = MeowlAssets.Meowl:Clone()
-            visual.Parent = workspace
-            sessionTrove:Add(visual)
+        local visual = MeowlAssets.Meowl:Clone()
+        visual.Parent = workspace
+        sessionTrove:Add(visual)
 
-            local weld = Instance.new("Weld")
-            weld.Part0  = visual.PrimaryPart
-            weld.Part1  = part
-            weld.C0     = visual.PrimaryPart.PivotOffset
-            weld.Parent = visual.PrimaryPart
+        local weld = Instance.new("Weld")
+        weld.Part0  = visual.PrimaryPart
+        weld.Part1  = part
+        weld.C0     = visual.PrimaryPart.PivotOffset
+        weld.Parent = visual.PrimaryPart
 
-            local animator = visual.AnimationController.Animator
+        local animator = visual.AnimationController.Animator
 
-            local idleTrack = animator:LoadAnimation(MeowlAssets.Idle)
-            idleTrack.Priority = Enum.AnimationPriority.Idle
-            idleTrack.Looped   = true
-            idleTrack:Play()
-            sessionTrove:Add(function()
-                idleTrack:Stop(0)
-                idleTrack:Destroy()
-            end)
+        local idleTrack = animator:LoadAnimation(MeowlAssets.Idle)
+        idleTrack.Priority = Enum.AnimationPriority.Idle
+        idleTrack.Looped   = true
+        idleTrack:Play()
+        sessionTrove:Add(function() idleTrack:Stop(0) idleTrack:Destroy() end)
 
-            local flyTrack = animator:LoadAnimation(MeowlAssets.Fly)
-            flyTrack.Priority = Enum.AnimationPriority.Action
-            flyTrack.Looped   = true
-            sessionTrove:Add(function()
-                flyTrack:Stop(0)
-                flyTrack:Destroy()
-            end)
+        local flyTrack = animator:LoadAnimation(MeowlAssets.Fly)
+        flyTrack.Priority = Enum.AnimationPriority.Action
+        flyTrack.Looped   = true
+        sessionTrove:Add(function() flyTrack:Stop(0) flyTrack:Destroy() end)
 
-            local attackTrack = animator:LoadAnimation(MeowlAssets.Attack)
-            attackTrack.Priority = Enum.AnimationPriority.Action2
-            attackTrack.Looped   = false
-            sessionTrove:Add(function()
-                attackTrack:Stop(0)
-                attackTrack:Destroy()
-            end)
+        local attackTrack = animator:LoadAnimation(MeowlAssets.Attack)
+        attackTrack.Priority = Enum.AnimationPriority.Action2
+        attackTrack.Looped   = false
+        sessionTrove:Add(function() attackTrack:Stop(0) attackTrack:Destroy() end)
 
-            sessionTrove:Add(part:GetAttributeChangedSignal("Flying"):Connect(function()
-                if part:GetAttribute("Flying") then
-                    flyTrack:Play()
-                else
-                    flyTrack:Stop()
-                end
-            end))
+        sessionTrove:Add(part:GetAttributeChangedSignal("Flying"):Connect(function()
+            if part:GetAttribute("Flying") then
+                flyTrack:Play()
+            else
+                flyTrack:Stop()
+            end
+        end))
 
-            sessionTrove:Add(part:GetAttributeChangedSignal("Attack"):Connect(function()
-                if part:GetAttribute("Attack") then
-                    attackTrack:Play()
-                end
-            end))
-        end
+        sessionTrove:Add(part:GetAttributeChangedSignal("Attack"):Connect(function()
+            if part:GetAttribute("Attack") then
+                attackTrack:Play()
+            end
+        end))
     end
 end
 
