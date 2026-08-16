@@ -22,23 +22,39 @@ local originalPositions = {}
 local recentlyTargeted  = {}
 local isActive          = true
 
--- ─── Load meowls from asset ───────────────────────────────────────────────────
-
-local meowlsFolder = sessionTrove:Add(Instance.new("Folder"))
-meowlsFolder.Name   = "Meowls"
-meowlsFolder.Parent = workspace
+-- ─── Load meowls folder from asset ───────────────────────────────────────────
 
 local objects = game:GetObjects("rbxassetid://139716127145162")
 for _, obj in objects do
-    obj.Parent = meowlsFolder
-    obj:SetAttribute("Flying", false)
-    obj:SetAttribute("Attack", false)
-    if obj:IsA("BasePart") then
-        originalPositions[obj] = obj.CFrame
-    elseif obj:IsA("Model") and obj.PrimaryPart then
-        originalPositions[obj] = obj:GetPivot()
+    obj.Name   = "Meowls"
+    obj.Parent = workspace
+    sessionTrove:Add(obj)
+    for _, part in ipairs(obj:GetChildren()) do
+        if part:IsA("BasePart") then
+            part:SetAttribute("Flying", false)
+            part:SetAttribute("Attack", false)
+            originalPositions[part] = part.CFrame
+            table.insert(spawnedMeowls, part)
+
+            -- clone visual meowl model and weld to each anchor part
+            local visual = Instance.new("Part")
+            visual.Size        = Vector3.new(2, 2, 2)
+            visual.Anchored    = false
+            visual.CanCollide  = false
+            visual.Transparency = 0
+            visual.BrickColor  = BrickColor.new("Bright violet")
+            visual.Material    = Enum.Material.Neon
+            visual.Parent      = workspace
+
+            local weld = Instance.new("WeldConstraint")
+            weld.Part0 = visual
+            weld.Part1 = part
+            weld.Parent = visual
+
+            visual.CFrame = part.CFrame
+            sessionTrove:Add(visual)
+        end
     end
-    table.insert(spawnedMeowls, obj)
 end
 
 -- ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -47,39 +63,15 @@ local function getAnimals()
     return CollectionService:GetTagged("Animal")
 end
 
-local function getPivotPos(obj)
-    if obj:IsA("BasePart") then
-        return obj.Position
-    elseif obj:IsA("Model") then
-        return obj:GetPivot().Position
-    end
+local function isFlying(part)
+    return part:GetAttribute("Flying")
 end
 
-local function setPivot(obj, cf)
-    if obj:IsA("BasePart") then
-        obj.CFrame = cf
-    elseif obj:IsA("Model") then
-        obj:PivotTo(cf)
-    end
+local function setAttr(part, key, val)
+    part:SetAttribute(key, val)
 end
 
-local function isFlying(obj)
-    if obj:IsA("BasePart") then
-        return obj:GetAttribute("Flying")
-    elseif obj:IsA("Model") and obj.PrimaryPart then
-        return obj.PrimaryPart:GetAttribute("Flying")
-    end
-end
-
-local function setAttr(obj, key, val)
-    if obj:IsA("BasePart") then
-        obj:SetAttribute(key, val)
-    elseif obj:IsA("Model") and obj.PrimaryPart then
-        obj.PrimaryPart:SetAttribute(key, val)
-    end
-end
-
--- ─── Burst (local visual only) ────────────────────────────────────────────────
+-- ─── Burst ────────────────────────────────────────────────────────────────────
 
 local function doBurst(target)
     if not target or not target.PrimaryPart then return end
@@ -108,7 +100,7 @@ local function flyToTarget(meowl, target)
 
     while isActive and meowl.Parent and target and target.Parent and target.PrimaryPart do
         local targetPos  = target.PrimaryPart.Position + Vector3.new(0, 10, 0)
-        local currentPos = getPivotPos(meowl)
+        local currentPos = meowl.Position
         local distance   = (targetPos - currentPos).Magnitude
 
         if distance < REACH_DIST then
@@ -118,7 +110,7 @@ local function flyToTarget(meowl, target)
 
         local dir  = (targetPos - currentPos).Unit
         local move = math.min(FLY_SPEED * RunService.Heartbeat:Wait(), distance)
-        setPivot(meowl, CFrame.new(currentPos + dir * move, currentPos + dir * move + dir))
+        meowl.CFrame = CFrame.new(currentPos + dir * move, currentPos + dir * move + dir)
     end
 
     setAttr(meowl, "Flying", false)
@@ -135,7 +127,7 @@ local function flyBack(meowl)
         return
     end
 
-    local start    = getPivotPos(meowl)
+    local start    = meowl.Position
     local target   = original.Position
     local distance = (target - start).Magnitude
     local duration = distance / FLY_SPEED
@@ -148,15 +140,15 @@ local function flyBack(meowl)
         local currentPos = start:Lerp(target, alpha)
         local lookDir    = target - currentPos
         if lookDir.Magnitude > 0 then
-            setPivot(meowl, CFrame.new(currentPos, currentPos + lookDir.Unit))
+            meowl.CFrame = CFrame.new(currentPos, currentPos + lookDir.Unit)
         else
-            setPivot(meowl, CFrame.new(currentPos))
+            meowl.CFrame = CFrame.new(currentPos)
         end
         task.wait()
     end
 
     if meowl and meowl.Parent then
-        setPivot(meowl, original)
+        meowl.CFrame = original
         setAttr(meowl, "Flying", false)
     end
 end
@@ -165,7 +157,6 @@ end
 
 local function selectTarget()
     local now = workspace:GetServerTimeNow()
-
     for k, t in pairs(recentlyTargeted) do
         if now - t > 20 then recentlyTargeted[k] = nil end
     end
@@ -216,7 +207,7 @@ sessionTrove:Add(task.spawn(function()
     end
 end))
 
--- ─── Shutdown when event ends ─────────────────────────────────────────────────
+-- ─── Shutdown ─────────────────────────────────────────────────────────────────
 
 sessionTrove:Add(task.spawn(function()
     while EventController:GetActiveEventData(EVENT_NAME) do task.wait(1) end
