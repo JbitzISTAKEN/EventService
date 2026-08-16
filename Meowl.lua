@@ -3,6 +3,7 @@ if not game:IsLoaded() then game.Loaded:Wait() end
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 local RunService        = game:GetService("RunService")
+local Debris            = game:GetService("Debris")
 
 local Trove           = require(ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Trove"))
 local EventController = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("EventController"))
@@ -19,10 +20,7 @@ local MeowlAssets = ReplicatedStorage:WaitForChild("Controllers")
     :WaitForChild("Events")
     :WaitForChild("Meowl")
 
--- wait for event to be active
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
-
--- wait for map to settle after event starts
 task.wait(3)
 
 local sessionTrove      = Trove.new()
@@ -40,7 +38,6 @@ for _, obj in objects do
     sessionTrove:Add(obj)
 end
 
--- wait for folder to populate
 local meowlsFolder = workspace:WaitForChild("Meowls")
 
 for _, part in ipairs(meowlsFolder:GetChildren()) do
@@ -114,19 +111,27 @@ end
 
 local function doBurst(target)
     if not target or not target.PrimaryPart then return end
-    local part = Instance.new("Part")
-    part.Size         = Vector3.new(6, 6, 6)
-    part.Shape        = Enum.PartType.Ball
-    part.Anchored     = true
-    part.CanCollide   = false
-    part.Transparency = 0.3
-    part.BrickColor   = BrickColor.new("Bright violet")
-    part.Material     = Enum.Material.Neon
-    part.CFrame       = CFrame.new(target.PrimaryPart.Position)
-    part.Parent       = workspace
-    task.delay(BURST_DURATION, function()
-        if part and part.Parent then part:Destroy() end
-    end)
+    local burst = MeowlAssets:WaitForChild("Burst"):Clone()
+    burst.Parent = target.PrimaryPart
+    if burst:IsA("BasePart") then
+        burst.CFrame = CFrame.new(target.PrimaryPart.Position)
+    end
+    -- enable all particles/beams inside
+    for _, v in ipairs(burst:GetDescendants()) do
+        if v:IsA("ParticleEmitter") then
+            v.Enabled = true
+            task.delay(BURST_DURATION, function() v.Enabled = false end)
+        elseif v:IsA("Sound") then
+            v:Play()
+        end
+    end
+    if burst:IsA("ParticleEmitter") then
+        burst.Enabled = true
+        task.delay(BURST_DURATION, function() burst.Enabled = false end)
+    elseif burst:IsA("Sound") then
+        burst:Play()
+    end
+    Debris:AddItem(burst, BURST_DURATION + 2)
 end
 
 -- ─── Fly to target ────────────────────────────────────────────────────────────
@@ -249,7 +254,7 @@ end))
 -- ─── Shutdown ─────────────────────────────────────────────────────────────────
 
 sessionTrove:Add(task.spawn(function()
-    while EventController:GetActiveEventData(EVENT_NAME) do task.wait(1) end
+    while EventController:GetActiveEventData(EVENT_NAME) do task.wait() end
     isActive = false
     sessionTrove:Destroy()
     table.clear(spawnedMeowls)
