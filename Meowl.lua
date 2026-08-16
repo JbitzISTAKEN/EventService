@@ -1,4 +1,4 @@
-print("DEAHT")
+print("minz")
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
@@ -152,10 +152,9 @@ end
 
 local function startSpawner()
     local objects = game:GetObjects("rbxassetid://139716127145162")
-    for _, obj in ipairs(objects) do
-        obj.Name   = "Meowls"
-        obj.Parent = workspace
-        sessionTrove:Add(obj)
+    for _, v in ipairs(objects) do
+        v.Parent = workspace
+        sessionTrove:Add(v)
     end
 
     local meowlsFolder = workspace:WaitForChild("Meowls")
