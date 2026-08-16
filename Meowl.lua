@@ -4,8 +4,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 local RunService        = game:GetService("RunService")
 
-local Trove           = require(ReplicatedStorage.Packages.Trove)
-local EventController = require(ReplicatedStorage.Controllers.EventController)
+local Trove           = require(ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Trove"))
+local EventController = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("EventController"))
 
 local EVENT_NAME          = "Meowl"
 local FLY_SPEED           = 50
@@ -14,7 +14,10 @@ local ATTACK_COOLDOWN_MIN = 5
 local ATTACK_COOLDOWN_MAX = 10
 local BURST_DURATION      = 0.5
 
-local MeowlAssets = ReplicatedStorage.Controllers.EventController.Events.Meowl
+local MeowlAssets = ReplicatedStorage:WaitForChild("Controllers")
+    :WaitForChild("EventController")
+    :WaitForChild("Events")
+    :WaitForChild("Meowl")
 
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
 
@@ -42,7 +45,7 @@ for _, part in ipairs(workspace.Meowls:GetChildren()) do
         originalPositions[part] = part.CFrame
         table.insert(spawnedMeowls, part)
 
-        local visual = MeowlAssets.Meowl:Clone()
+        local visual = MeowlAssets:WaitForChild("Meowl"):Clone()
         visual.Parent = workspace
         sessionTrove:Add(visual)
 
@@ -54,18 +57,18 @@ for _, part in ipairs(workspace.Meowls:GetChildren()) do
 
         local animator = visual.AnimationController.Animator
 
-        local idleTrack = animator:LoadAnimation(MeowlAssets.Idle)
+        local idleTrack = animator:LoadAnimation(MeowlAssets:WaitForChild("Idle"))
         idleTrack.Priority = Enum.AnimationPriority.Idle
         idleTrack.Looped   = true
         idleTrack:Play()
         sessionTrove:Add(function() idleTrack:Stop(0) idleTrack:Destroy() end)
 
-        local flyTrack = animator:LoadAnimation(MeowlAssets.Fly)
+        local flyTrack = animator:LoadAnimation(MeowlAssets:WaitForChild("Fly"))
         flyTrack.Priority = Enum.AnimationPriority.Action
         flyTrack.Looped   = true
         sessionTrove:Add(function() flyTrack:Stop(0) flyTrack:Destroy() end)
 
-        local attackTrack = animator:LoadAnimation(MeowlAssets.Attack)
+        local attackTrack = animator:LoadAnimation(MeowlAssets:WaitForChild("Attack"))
         attackTrack.Priority = Enum.AnimationPriority.Action2
         attackTrack.Looped   = false
         sessionTrove:Add(function() attackTrack:Stop(0) attackTrack:Destroy() end)
@@ -236,7 +239,7 @@ sessionTrove:Add(task.spawn(function()
     end
 end))
 
--- ─── Shutdown ─────────────────────────────────────────────────────────────────
+-- ─── Shutdown ─────────────────────────────────────────────────----------------------------------------------------------------
 
 sessionTrove:Add(task.spawn(function()
     while EventController:GetActiveEventData(EVENT_NAME) do task.wait(1) end
