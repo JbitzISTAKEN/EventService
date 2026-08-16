@@ -1,4 +1,5 @@
-print("DEAHT")
+print("vertzy")
+
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 local RunService        = game:GetService("RunService")
@@ -6,6 +7,7 @@ local Debris            = game:GetService("Debris")
 
 local Trove           = require(ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Trove"))
 local EventController = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("EventController"))
+local EffectController = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("EffectController"))
 
 local EVENT_NAME          = "Meowl"
 local FLY_SPEED           = 50
@@ -19,16 +21,29 @@ local MeowlAssets = ReplicatedStorage:WaitForChild("Controllers")
     :WaitForChild("Events")
     :WaitForChild("Meowl")
 
+-- Wait until the event data is active
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
-task.wait()
 
+-- ─── Patch EffectController.Activate to detect "Blink" ─────────────────────
+local blinkDetected = false
+local originalActivate = EffectController.Activate
+
+EffectController.Activate = function(self, effectName, ...)
+    if effectName == "Blink" then
+        blinkDetected = true
+    end
+    return originalActivate(self, effectName, ...)
+end
+
+-- ─── Wait for the first Blink effect ──────────────────────────────────────
+repeat task.wait() until blinkDetected
+
+-- ─── Now load the meowls (spawn them) ──────────────────────────────────────
 local sessionTrove      = Trove.new()
 local spawnedMeowls     = {}
 local originalPositions = {}
 local recentlyTargeted  = {}
 local isActive          = true
-
--- ─── Load meowls folder from asset ───────────────────────────────────────────
 
 local objects = game:GetObjects("rbxassetid://139716127145162")
 for _, obj in objects do
@@ -115,7 +130,6 @@ local function doBurst(target)
     if burst:IsA("BasePart") then
         burst.CFrame = CFrame.new(target.PrimaryPart.Position)
     end
-    -- enable all particles/beams inside
     for _, v in ipairs(burst:GetDescendants()) do
         if v:IsA("ParticleEmitter") then
             v.Enabled = true
