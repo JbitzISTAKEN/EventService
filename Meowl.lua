@@ -1,4 +1,3 @@
-
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 local RunService        = game:GetService("RunService")
@@ -19,16 +18,24 @@ local MeowlAssets = ReplicatedStorage:WaitForChild("Controllers")
     :WaitForChild("Events")
     :WaitForChild("Meowl")
 
-repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
-task.wait(1)
+local onStartFired = false
+
+repeat task.wait() until EventController.Events and EventController.Events[EVENT_NAME]
+
+local orig = EventController.Events[EVENT_NAME].OnStart
+EventController.Events[EVENT_NAME].OnStart = function(self, ...)
+    local result = orig(self, ...)
+    onStartFired = true
+    return result
+end
+
+repeat task.wait() until onStartFired
 
 local sessionTrove      = Trove.new()
 local spawnedMeowls     = {}
 local originalPositions = {}
 local recentlyTargeted  = {}
 local isActive          = true
-
--- ─── Load meowls folder from asset ───────────────────────────────────────────
 
 local objects = game:GetObjects("rbxassetid://139716127145162")
 for _, obj in objects do
@@ -77,22 +84,14 @@ for _, part in ipairs(meowlsFolder:GetChildren()) do
         sessionTrove:Add(function() attackTrack:Stop(0) attackTrack:Destroy() end)
 
         sessionTrove:Add(part:GetAttributeChangedSignal("Flying"):Connect(function()
-            if part:GetAttribute("Flying") then
-                flyTrack:Play()
-            else
-                flyTrack:Stop()
-            end
+            if part:GetAttribute("Flying") then flyTrack:Play() else flyTrack:Stop() end
         end))
 
         sessionTrove:Add(part:GetAttributeChangedSignal("Attack"):Connect(function()
-            if part:GetAttribute("Attack") then
-                attackTrack:Play()
-            end
+            if part:GetAttribute("Attack") then attackTrack:Play() end
         end))
     end
 end
-
--- ─── Helpers ──────────────────────────────────────────────────────────────────
 
 local function getAnimals()
     return CollectionService:GetTagged("Animal")
@@ -106,8 +105,6 @@ local function setAttr(part, key, val)
     part:SetAttribute(key, val)
 end
 
--- ─── Burst ────────────────────────────────────────────────────────────────────
-
 local function doBurst(target)
     if not target or not target.PrimaryPart then return end
     local burst = MeowlAssets:WaitForChild("Burst"):Clone()
@@ -115,7 +112,6 @@ local function doBurst(target)
     if burst:IsA("BasePart") then
         burst.CFrame = CFrame.new(target.PrimaryPart.Position)
     end
-    -- enable all particles/beams inside
     for _, v in ipairs(burst:GetDescendants()) do
         if v:IsA("ParticleEmitter") then
             v.Enabled = true
@@ -132,8 +128,6 @@ local function doBurst(target)
     end
     Debris:AddItem(burst, BURST_DURATION + 2)
 end
-
--- ─── Fly to target ────────────────────────────────────────────────────────────
 
 local function flyToTarget(meowl, target)
     if not meowl or not meowl.Parent then return false end
@@ -159,8 +153,6 @@ local function flyToTarget(meowl, target)
     setAttr(meowl, "Flying", false)
     return false
 end
-
--- ─── Fly back ─────────────────────────────────────────────────────────────────
 
 local function flyBack(meowl)
     if not meowl or not meowl.Parent then return end
@@ -196,8 +188,6 @@ local function flyBack(meowl)
     end
 end
 
--- ─── Select target ────────────────────────────────────────────────────────────
-
 local function selectTarget()
     local now = workspace:GetServerTimeNow()
     for k, t in pairs(recentlyTargeted) do
@@ -224,8 +214,6 @@ local function selectTarget()
            available[math.random(1, #available)]
 end
 
--- ─── Attack loop ──────────────────────────────────────────────────────────────
-
 sessionTrove:Add(task.spawn(function()
     while isActive do
         task.wait(math.random(ATTACK_COOLDOWN_MIN, ATTACK_COOLDOWN_MAX))
@@ -249,8 +237,6 @@ sessionTrove:Add(task.spawn(function()
         end)
     end
 end))
-
--- ─── Shutdown ─────────────────────────────────────────────────────────────────
 
 sessionTrove:Add(task.spawn(function()
     while EventController:GetActiveEventData(EVENT_NAME) do task.wait() end
