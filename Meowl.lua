@@ -1,4 +1,4 @@
-print("vertzy")
+print("DEAHT")
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
@@ -24,24 +24,18 @@ local MeowlAssets = ReplicatedStorage:WaitForChild("Controllers")
 -- Wait until the event data is active
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
 
--- ─── Patch EffectController.Activate – only count "Blink" if it's for Meowl ──
+-- ─── Patch EffectController.Activate to detect "Blink" ─────────────────────
 local blinkDetected = false
 local originalActivate = EffectController.Activate
 
 EffectController.Activate = function(self, effectName, ...)
     if effectName == "Blink" then
-        local args = {...}
-        for _, arg in ipairs(args) do
-            if arg == EVENT_NAME then  -- "Meowl"
-                blinkDetected = true
-                break
-            end
-        end
+        blinkDetected = true
     end
     return originalActivate(self, effectName, ...)
 end
 
--- ─── Wait for that specific Blink ──────────────────────────────────────────
+-- ─── Wait for the first Blink effect ──────────────────────────────────────
 repeat task.wait() until blinkDetected
 
 -- ─── Now load the meowls (spawn them) ──────────────────────────────────────
