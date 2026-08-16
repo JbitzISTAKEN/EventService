@@ -1,12 +1,12 @@
-print("Death to everyone")
+print("DEAHT")
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 local RunService        = game:GetService("RunService")
 local Debris            = game:GetService("Debris")
 
-local Trove            = require(ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Trove"))
-local EventController  = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("EventController"))
+local Trove           = require(ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Trove"))
+local EventController = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("EventController"))
 local EffectController = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("EffectController"))
 
 local EVENT_NAME          = "Meowl"
@@ -21,34 +21,24 @@ local MeowlAssets = ReplicatedStorage:WaitForChild("Controllers")
     :WaitForChild("Events")
     :WaitForChild("Meowl")
 
+-- Wait until the event data is active
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
-repeat task.wait() until EventController.Events and EventController.Events[EVENT_NAME]
 
-local meowlModule    = EventController.Events[EVENT_NAME]
-local origOnStart    = meowlModule.OnStart
-local origActivate   = EffectController.Activate
-local lastMeowlStart = 0
-local blinkDetected  = false
-
-meowlModule.OnStart = function(self, ...)
-    lastMeowlStart = os.clock()
-    return origOnStart(self, ...)
-end
+-- ─── Patch EffectController.Activate to detect "Blink" ─────────────────────
+local blinkDetected = false
+local originalActivate = EffectController.Activate
 
 EffectController.Activate = function(self, effectName, ...)
-    if effectName == "Blink" and (os.clock() - lastMeowlStart) < 1 then
+    if effectName == "Blink" then
         blinkDetected = true
     end
-    return origActivate(self, effectName, ...)
+    return originalActivate(self, effectName, ...)
 end
 
+-- ─── Wait for the first Blink effect ──────────────────────────────────────
 repeat task.wait() until blinkDetected
 
-meowlModule.OnStart       = origOnStart
-EffectController.Activate = origActivate
-
--- ─── Session state ────────────────────────────────────────────────────────────
-
+-- ─── Now load the meowls (spawn them) ──────────────────────────────────────
 local sessionTrove      = Trove.new()
 local spawnedMeowls     = {}
 local originalPositions = {}
@@ -117,6 +107,8 @@ for _, part in ipairs(meowlsFolder:GetChildren()) do
     end
 end
 
+-- ─── Helpers ──────────────────────────────────────────────────────────────────
+
 local function getAnimals()
     return CollectionService:GetTagged("Animal")
 end
@@ -128,6 +120,8 @@ end
 local function setAttr(part, key, val)
     part:SetAttribute(key, val)
 end
+
+-- ─── Burst ────────────────────────────────────────────────────────────────────
 
 local function doBurst(target)
     if not target or not target.PrimaryPart then return end
@@ -153,6 +147,8 @@ local function doBurst(target)
     Debris:AddItem(burst, BURST_DURATION + 2)
 end
 
+-- ─── Fly to target ────────────────────────────────────────────────────────────
+
 local function flyToTarget(meowl, target)
     if not meowl or not meowl.Parent then return false end
     if not target or not target.Parent or not target.PrimaryPart then return false end
@@ -177,6 +173,8 @@ local function flyToTarget(meowl, target)
     setAttr(meowl, "Flying", false)
     return false
 end
+
+-- ─── Fly back ─────────────────────────────────────────────────────────────────
 
 local function flyBack(meowl)
     if not meowl or not meowl.Parent then return end
@@ -212,6 +210,8 @@ local function flyBack(meowl)
     end
 end
 
+-- ─── Select target ────────────────────────────────────────────────────────────
+
 local function selectTarget()
     local now = workspace:GetServerTimeNow()
     for k, t in pairs(recentlyTargeted) do
@@ -238,6 +238,8 @@ local function selectTarget()
            available[math.random(1, #available)]
 end
 
+-- ─── Attack loop ──────────────────────────────────────────────────────────────
+
 sessionTrove:Add(task.spawn(function()
     while isActive do
         task.wait(math.random(ATTACK_COOLDOWN_MIN, ATTACK_COOLDOWN_MAX))
@@ -261,6 +263,8 @@ sessionTrove:Add(task.spawn(function()
         end)
     end
 end))
+
+-- ─── Shutdown ─────────────────────────────────────────────────────────────────
 
 sessionTrove:Add(task.spawn(function()
     while EventController:GetActiveEventData(EVENT_NAME) do task.wait() end
