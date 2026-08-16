@@ -1,12 +1,8 @@
+
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 local RunService        = game:GetService("RunService")
 local Debris            = game:GetService("Debris")
-
--- Ensure the game is loaded before doing anything
-if not game:IsLoaded() then
-    game.Loaded:Wait()
-end
 
 local Trove           = require(ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Trove"))
 local EventController = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("EventController"))
@@ -23,37 +19,17 @@ local MeowlAssets = ReplicatedStorage:WaitForChild("Controllers")
     :WaitForChild("Events")
     :WaitForChild("Meowl")
 
--- ─── Wait for Blink effect for Meowl event ───────────────────────────────────
--- Set up a signal that fires when EffectController.Activate is called with "Blink"
--- and the calling event is "Meowl".
-local blinkSignal = Instance.new("BindableEvent")
-
-local EffectController = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("EffectController"))
-local origActivate = EffectController.Activate
-
-EffectController.Activate = function(self, name, ...)
-    if name == "Blink" then
-        local trace = debug.traceback(nil, 2)
-        local eventName = trace:match("Events%.([%w_]+):%d+")
-        if eventName == EVENT_NAME then
-            blinkSignal:Fire()
-        end
-    end
-    return origActivate(self, name, ...)
-end
-
--- Wait for the event to become active, then wait for the Blink signal
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
-blinkSignal.Event:Wait()
+task.wait(1)
 
--- ─── Everything below runs only after the Blink has occurred ────────────────
 local sessionTrove      = Trove.new()
 local spawnedMeowls     = {}
 local originalPositions = {}
 local recentlyTargeted  = {}
 local isActive          = true
 
--- Load meowls folder from asset
+-- ─── Load meowls folder from asset ───────────────────────────────────────────
+
 local objects = game:GetObjects("rbxassetid://139716127145162")
 for _, obj in objects do
     obj.Name   = "Meowls"
