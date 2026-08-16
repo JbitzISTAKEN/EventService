@@ -1,4 +1,3 @@
-if not game:IsLoaded() then game.Loaded:Wait() end
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
@@ -254,7 +253,7 @@ end))
 -- ─── Shutdown ─────────────────────────────────────────────────────────────────
 
 sessionTrove:Add(task.spawn(function()
-    while EventController:GetActiveEventData(EVENT_NAME) do task.wait(1) end
+    while EventController:GetActiveEventData(EVENT_NAME) do task.wait() end
     isActive = false
     sessionTrove:Destroy()
     table.clear(spawnedMeowls)
