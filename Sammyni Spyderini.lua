@@ -535,7 +535,7 @@ local function main()
         end
     end))
 
-    while EventController:GetActiveEventData(EVENT_NAME) do task.wait(1) end
+    while EventController:GetActiveEventData(EVENT_NAME) do task.wait() end
 
     isActive = false
     eventTrove:Destroy()
