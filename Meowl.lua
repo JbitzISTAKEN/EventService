@@ -14,6 +14,8 @@ local ATTACK_COOLDOWN_MIN = 5
 local ATTACK_COOLDOWN_MAX = 10
 local BURST_DURATION      = 0.5
 
+local MeowlAssets = ReplicatedStorage.Controllers.EventController.Events.Meowl
+
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
 
 local sessionTrove      = Trove.new()
@@ -29,30 +31,67 @@ for _, obj in objects do
     obj.Name   = "Meowls"
     obj.Parent = workspace
     sessionTrove:Add(obj)
+
     for _, part in ipairs(obj:GetChildren()) do
         if part:IsA("BasePart") then
+            part.Anchored   = true
+            part.CanCollide = false
             part:SetAttribute("Flying", false)
             part:SetAttribute("Attack", false)
             originalPositions[part] = part.CFrame
             table.insert(spawnedMeowls, part)
 
-            -- clone visual meowl model and weld to each anchor part
-            local visual = Instance.new("Part")
-            visual.Size        = Vector3.new(2, 2, 2)
-            visual.Anchored    = false
-            visual.CanCollide  = false
-            visual.Transparency = 0
-            visual.BrickColor  = BrickColor.new("Bright violet")
-            visual.Material    = Enum.Material.Neon
-            visual.Parent      = workspace
-
-            local weld = Instance.new("WeldConstraint")
-            weld.Part0 = visual
-            weld.Part1 = part
-            weld.Parent = visual
-
-            visual.CFrame = part.CFrame
+            -- clone real meowl visual and weld to anchor
+            local visual = MeowlAssets.Meowl:Clone()
+            visual.Parent = workspace
             sessionTrove:Add(visual)
+
+            local weld = Instance.new("Weld")
+            weld.Part0  = visual.PrimaryPart
+            weld.Part1  = part
+            weld.C0     = visual.PrimaryPart.PivotOffset
+            weld.Parent = visual.PrimaryPart
+
+            local animator = visual.AnimationController.Animator
+
+            local idleTrack = animator:LoadAnimation(MeowlAssets.Idle)
+            idleTrack.Priority = Enum.AnimationPriority.Idle
+            idleTrack.Looped   = true
+            idleTrack:Play()
+            sessionTrove:Add(function()
+                idleTrack:Stop(0)
+                idleTrack:Destroy()
+            end)
+
+            local flyTrack = animator:LoadAnimation(MeowlAssets.Fly)
+            flyTrack.Priority = Enum.AnimationPriority.Action
+            flyTrack.Looped   = true
+            sessionTrove:Add(function()
+                flyTrack:Stop(0)
+                flyTrack:Destroy()
+            end)
+
+            local attackTrack = animator:LoadAnimation(MeowlAssets.Attack)
+            attackTrack.Priority = Enum.AnimationPriority.Action2
+            attackTrack.Looped   = false
+            sessionTrove:Add(function()
+                attackTrack:Stop(0)
+                attackTrack:Destroy()
+            end)
+
+            sessionTrove:Add(part:GetAttributeChangedSignal("Flying"):Connect(function()
+                if part:GetAttribute("Flying") then
+                    flyTrack:Play()
+                else
+                    flyTrack:Stop()
+                end
+            end))
+
+            sessionTrove:Add(part:GetAttributeChangedSignal("Attack"):Connect(function()
+                if part:GetAttribute("Attack") then
+                    attackTrack:Play()
+                end
+            end))
         end
     end
 end
