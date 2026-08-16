@@ -1,3 +1,6 @@
+-- ═══════════════════════════════════════
+--  MEOWL SPAWNER
+-- ═══════════════════════════════════════
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 local RunService        = game:GetService("RunService")
@@ -18,18 +21,29 @@ local MeowlAssets = ReplicatedStorage:WaitForChild("Controllers")
     :WaitForChild("Events")
     :WaitForChild("Meowl")
 
-local onStartFired = false
+-- hard reset prior OnStart hook if it exists
+if _G.MeowlOnStartHook then
+    if EventController.Events and EventController.Events[EVENT_NAME] and _G.MeowlOnStartHook.orig then
+        EventController.Events[EVENT_NAME].OnStart = _G.MeowlOnStartHook.orig
+    end
+    _G.MeowlOnStartHook = nil
+end
 
 repeat task.wait() until EventController.Events and EventController.Events[EVENT_NAME]
 
-local orig = EventController.Events[EVENT_NAME].OnStart
+_G.MeowlOnStartHook = { orig = EventController.Events[EVENT_NAME].OnStart, fired = false }
+local hook = _G.MeowlOnStartHook
+
+local origOnStart = hook.orig
 EventController.Events[EVENT_NAME].OnStart = function(self, ...)
-    local result = orig(self, ...)
-    onStartFired = true
+    local result = origOnStart(self, ...)
+    hook.fired = true
+    EventController.Events[EVENT_NAME].OnStart = origOnStart
+    _G.MeowlOnStartHook = nil
     return result
 end
 
-repeat task.wait() until onStartFired
+repeat task.wait() until hook.fired
 
 local sessionTrove      = Trove.new()
 local spawnedMeowls     = {}
@@ -38,13 +52,13 @@ local recentlyTargeted  = {}
 local isActive          = true
 
 local objects = game:GetObjects("rbxassetid://139716127145162")
-for _, obj in objects do
-    obj.Name   = "Meowls"
-    obj.Parent = workspace
-    sessionTrove:Add(obj)
+for _, v in ipairs(objects) do
+    v.Parent = workspace
+    sessionTrove:Add(v)
 end
 
 local meowlsFolder = workspace:WaitForChild("Meowls")
+repeat task.wait() until #meowlsFolder:GetChildren() > 0
 
 for _, part in ipairs(meowlsFolder:GetChildren()) do
     if part:IsA("BasePart") then
