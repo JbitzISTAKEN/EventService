@@ -19,7 +19,11 @@ local MeowlAssets = ReplicatedStorage:WaitForChild("Controllers")
     :WaitForChild("Events")
     :WaitForChild("Meowl")
 
+-- wait for event to be active
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
+
+-- wait for map to settle after event starts
+task.wait(3)
 
 local sessionTrove      = Trove.new()
 local spawnedMeowls     = {}
@@ -36,7 +40,10 @@ for _, obj in objects do
     sessionTrove:Add(obj)
 end
 
-for _, part in ipairs(workspace.Meowls:GetChildren()) do
+-- wait for folder to populate
+local meowlsFolder = workspace:WaitForChild("Meowls")
+
+for _, part in ipairs(meowlsFolder:GetChildren()) do
     if part:IsA("BasePart") then
         part.Anchored   = true
         part.CanCollide = false
@@ -239,7 +246,7 @@ sessionTrove:Add(task.spawn(function()
     end
 end))
 
--- ─── Shutdown ─────────────────────────────────────────────────----------------------------------------------------------------
+-- ─── Shutdown ─────────────────────────────────────────────────────────────────
 
 sessionTrove:Add(task.spawn(function()
     while EventController:GetActiveEventData(EVENT_NAME) do task.wait(1) end
