@@ -533,7 +533,7 @@ local function main()
     end))
 
     -- Watchdog — cleans up when event ends
-    while EventController:GetActiveEventData(EVENT_NAME) do task.wait(1) end
+    while EventController:GetActiveEventData(EVENT_NAME) do task.wait() end
 
     isActive = false
     eventTrove:Destroy()
