@@ -1,12 +1,12 @@
-print("DEAHT")
+print("Death to everyone")
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 local RunService        = game:GetService("RunService")
 local Debris            = game:GetService("Debris")
 
-local Trove           = require(ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Trove"))
-local EventController = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("EventController"))
+local Trove            = require(ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Trove"))
+local EventController  = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("EventController"))
 local EffectController = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("EffectController"))
 
 local EVENT_NAME          = "Meowl"
@@ -16,34 +16,38 @@ local ATTACK_COOLDOWN_MIN = 5
 local ATTACK_COOLDOWN_MAX = 10
 local BURST_DURATION      = 0.5
 
--- ─── Local flag for Blink detection (no _G) ────────────────────────────────
-local blinkOccurred = false
+local MeowlAssets = ReplicatedStorage:WaitForChild("Controllers")
+    :WaitForChild("EventController")
+    :WaitForChild("Events")
+    :WaitForChild("Meowl")
 
--- ─── Patch EffectController to detect Blink caused by Meowl ────────────────
-local origActivate = EffectController.Activate
+repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
+repeat task.wait() until EventController.Events and EventController.Events[EVENT_NAME]
+
+local meowlModule    = EventController.Events[EVENT_NAME]
+local origOnStart    = meowlModule.OnStart
+local origActivate   = EffectController.Activate
+local lastMeowlStart = 0
+local blinkDetected  = false
+
+meowlModule.OnStart = function(self, ...)
+    lastMeowlStart = os.clock()
+    return origOnStart(self, ...)
+end
 
 EffectController.Activate = function(self, effectName, ...)
-    if effectName == "Blink" then
-        local activeEvents = EventController:GetActiveEvents()
-        for _, ev in ipairs(activeEvents) do
-            if ev.eventName == EVENT_NAME then
-                blinkOccurred = true   -- signal to the main script
-                break
-            end
-        end
+    if effectName == "Blink" and (os.clock() - lastMeowlStart) < 1 then
+        blinkDetected = true
     end
     return origActivate(self, effectName, ...)
 end
 
--- ─── Wait for event data, then wait for the Blink ──────────────────────────
-repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
+repeat task.wait() until blinkDetected
 
--- Reset flag and wait until the Blink occurs (caused by Meowl)
-blinkOccurred = false
-repeat task.wait() until blinkOccurred
+meowlModule.OnStart       = origOnStart
+EffectController.Activate = origActivate
 
--- Reset flag for cleanliness (optional)
-blinkOccurred = nil
+-- ─── Session state ────────────────────────────────────────────────────────────
 
 local sessionTrove      = Trove.new()
 local spawnedMeowls     = {}
@@ -51,7 +55,6 @@ local originalPositions = {}
 local recentlyTargeted  = {}
 local isActive          = true
 
--- ─── Load meowls folder from asset ───────────────────────────────────────────
 local objects = game:GetObjects("rbxassetid://139716127145162")
 for _, obj in objects do
     obj.Name   = "Meowls"
@@ -69,11 +72,6 @@ for _, part in ipairs(meowlsFolder:GetChildren()) do
         part:SetAttribute("Attack", false)
         originalPositions[part] = part.CFrame
         table.insert(spawnedMeowls, part)
-
-        local MeowlAssets = ReplicatedStorage:WaitForChild("Controllers")
-            :WaitForChild("EventController")
-            :WaitForChild("Events")
-            :WaitForChild("Meowl")
 
         local visual = MeowlAssets:WaitForChild("Meowl"):Clone()
         visual.Parent = workspace
@@ -119,7 +117,6 @@ for _, part in ipairs(meowlsFolder:GetChildren()) do
     end
 end
 
--- ─── Helpers ──────────────────────────────────────────────────────────────────
 local function getAnimals()
     return CollectionService:GetTagged("Animal")
 end
@@ -132,13 +129,8 @@ local function setAttr(part, key, val)
     part:SetAttribute(key, val)
 end
 
--- ─── Burst ────────────────────────────────────────────────────────────────────
 local function doBurst(target)
     if not target or not target.PrimaryPart then return end
-    local MeowlAssets = ReplicatedStorage:WaitForChild("Controllers")
-        :WaitForChild("EventController")
-        :WaitForChild("Events")
-        :WaitForChild("Meowl")
     local burst = MeowlAssets:WaitForChild("Burst"):Clone()
     burst.Parent = target.PrimaryPart
     if burst:IsA("BasePart") then
@@ -161,7 +153,6 @@ local function doBurst(target)
     Debris:AddItem(burst, BURST_DURATION + 2)
 end
 
--- ─── Fly to target ────────────────────────────────────────────────────────────
 local function flyToTarget(meowl, target)
     if not meowl or not meowl.Parent then return false end
     if not target or not target.Parent or not target.PrimaryPart then return false end
@@ -187,7 +178,6 @@ local function flyToTarget(meowl, target)
     return false
 end
 
--- ─── Fly back ─────────────────────────────────────────────────────────────────
 local function flyBack(meowl)
     if not meowl or not meowl.Parent then return end
     local original = originalPositions[meowl]
@@ -222,7 +212,6 @@ local function flyBack(meowl)
     end
 end
 
--- ─── Select target ────────────────────────────────────────────────────────────
 local function selectTarget()
     local now = workspace:GetServerTimeNow()
     for k, t in pairs(recentlyTargeted) do
@@ -249,7 +238,6 @@ local function selectTarget()
            available[math.random(1, #available)]
 end
 
--- ─── Attack loop ──────────────────────────────────────────────────────────────
 sessionTrove:Add(task.spawn(function()
     while isActive do
         task.wait(math.random(ATTACK_COOLDOWN_MIN, ATTACK_COOLDOWN_MAX))
@@ -274,7 +262,6 @@ sessionTrove:Add(task.spawn(function()
     end
 end))
 
--- ─── Shutdown ─────────────────────────────────────────────────────────────────
 sessionTrove:Add(task.spawn(function()
     while EventController:GetActiveEventData(EVENT_NAME) do task.wait() end
     isActive = false
