@@ -16,17 +16,18 @@ local ATTACK_COOLDOWN_MIN = 5
 local ATTACK_COOLDOWN_MAX = 10
 local BURST_DURATION      = 0.5
 
--- ─── Patch EffectController to detect Blink caused by Meowl ────────────────
+-- ─── Local flag for Blink detection (no _G) ────────────────────────────────
+local blinkOccurred = false
 
+-- ─── Patch EffectController to detect Blink caused by Meowl ────────────────
 local origActivate = EffectController.Activate
 
 EffectController.Activate = function(self, effectName, ...)
     if effectName == "Blink" then
-        -- Check if the Meowl event is currently active
         local activeEvents = EventController:GetActiveEvents()
         for _, ev in ipairs(activeEvents) do
             if ev.eventName == EVENT_NAME then
-                _G.MeowlBlinkOccurred = true   -- signal to the main script
+                blinkOccurred = true   -- signal to the main script
                 break
             end
         end
@@ -35,15 +36,14 @@ EffectController.Activate = function(self, effectName, ...)
 end
 
 -- ─── Wait for event data, then wait for the Blink ──────────────────────────
-
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
 
--- Reset the flag and wait until the Blink occurs (caused by Meowl)
-_G.MeowlBlinkOccurred = false
-repeat task.wait() until _G.MeowlBlinkOccurred
+-- Reset flag and wait until the Blink occurs (caused by Meowl)
+blinkOccurred = false
+repeat task.wait() until blinkOccurred
 
--- Optional: clear the flag so it doesn't interfere later
-_G.MeowlBlinkOccurred = nil
+-- Reset flag for cleanliness (optional)
+blinkOccurred = nil
 
 local sessionTrove      = Trove.new()
 local spawnedMeowls     = {}
@@ -52,7 +52,6 @@ local recentlyTargeted  = {}
 local isActive          = true
 
 -- ─── Load meowls folder from asset ───────────────────────────────────────────
-
 local objects = game:GetObjects("rbxassetid://139716127145162")
 for _, obj in objects do
     obj.Name   = "Meowls"
@@ -121,7 +120,6 @@ for _, part in ipairs(meowlsFolder:GetChildren()) do
 end
 
 -- ─── Helpers ──────────────────────────────────────────────────────────────────
-
 local function getAnimals()
     return CollectionService:GetTagged("Animal")
 end
@@ -135,7 +133,6 @@ local function setAttr(part, key, val)
 end
 
 -- ─── Burst ────────────────────────────────────────────────────────────────────
-
 local function doBurst(target)
     if not target or not target.PrimaryPart then return end
     local MeowlAssets = ReplicatedStorage:WaitForChild("Controllers")
@@ -165,7 +162,6 @@ local function doBurst(target)
 end
 
 -- ─── Fly to target ────────────────────────────────────────────────────────────
-
 local function flyToTarget(meowl, target)
     if not meowl or not meowl.Parent then return false end
     if not target or not target.Parent or not target.PrimaryPart then return false end
@@ -192,7 +188,6 @@ local function flyToTarget(meowl, target)
 end
 
 -- ─── Fly back ─────────────────────────────────────────────────────────────────
-
 local function flyBack(meowl)
     if not meowl or not meowl.Parent then return end
     local original = originalPositions[meowl]
@@ -228,7 +223,6 @@ local function flyBack(meowl)
 end
 
 -- ─── Select target ────────────────────────────────────────────────────────────
-
 local function selectTarget()
     local now = workspace:GetServerTimeNow()
     for k, t in pairs(recentlyTargeted) do
@@ -256,7 +250,6 @@ local function selectTarget()
 end
 
 -- ─── Attack loop ──────────────────────────────────────────────────────────────
-
 sessionTrove:Add(task.spawn(function()
     while isActive do
         task.wait(math.random(ATTACK_COOLDOWN_MIN, ATTACK_COOLDOWN_MAX))
@@ -282,7 +275,6 @@ sessionTrove:Add(task.spawn(function()
 end))
 
 -- ─── Shutdown ─────────────────────────────────────────────────────────────────
-
 sessionTrove:Add(task.spawn(function()
     while EventController:GetActiveEventData(EVENT_NAME) do task.wait() end
     isActive = false
