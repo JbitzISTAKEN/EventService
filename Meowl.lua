@@ -20,7 +20,7 @@ local MeowlAssets = ReplicatedStorage:WaitForChild("Controllers")
     :WaitForChild("Meowl")
 
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
-task.wait(2.5)
+task.wait(1)
 
 local sessionTrove      = Trove.new()
 local spawnedMeowls     = {}
