@@ -1,3 +1,4 @@
+if not game:IsLoaded() then game.Loaded:Wait() end
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
@@ -6,6 +7,7 @@ local Debris            = game:GetService("Debris")
 
 local Trove           = require(ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Trove"))
 local EventController = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("EventController"))
+local EffectController = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("EffectController"))
 
 local EVENT_NAME          = "Meowl"
 local FLY_SPEED           = 50
@@ -20,7 +22,40 @@ local MeowlAssets = ReplicatedStorage:WaitForChild("Controllers")
     :WaitForChild("Meowl")
 
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
-task.wait(1)
+
+-- wait for Meowl module to be loaded
+repeat task.wait() until EventController.Events and EventController.Events.Meowl
+
+-- hook OnStart to know when blink fires
+local meowlOnStartRunning = false
+local meowlModule = EventController.Events.Meowl
+local originalOnStart = meowlModule.OnStart
+
+meowlModule.OnStart = function(self, ...)
+    meowlOnStartRunning = true
+    local results = { originalOnStart(self, ...) }
+    meowlOnStartRunning = false
+    return table.unpack(results)
+end
+
+-- hook EffectController.Activate to catch the blink
+local blinkFired = Instance.new("BindableEvent")
+local originalActivate = EffectController.Activate
+
+EffectController.Activate = function(self, effectName, ...)
+    if effectName == "Blink" and meowlOnStartRunning then
+        blinkFired:Fire()
+    end
+    return originalActivate(self, effectName, ...)
+end
+
+-- wait for blink
+blinkFired.Event:Wait()
+blinkFired:Destroy()
+
+-- restore hooks
+EffectController.Activate = originalActivate
+meowlModule.OnStart = originalOnStart
 
 local sessionTrove      = Trove.new()
 local spawnedMeowls     = {}
@@ -38,6 +73,7 @@ for _, obj in objects do
 end
 
 local meowlsFolder = workspace:WaitForChild("Meowls")
+repeat task.wait() until #meowlsFolder:GetChildren() > 0
 
 for _, part in ipairs(meowlsFolder:GetChildren()) do
     if part:IsA("BasePart") then
@@ -115,7 +151,6 @@ local function doBurst(target)
     if burst:IsA("BasePart") then
         burst.CFrame = CFrame.new(target.PrimaryPart.Position)
     end
-    -- enable all particles/beams inside
     for _, v in ipairs(burst:GetDescendants()) do
         if v:IsA("ParticleEmitter") then
             v.Enabled = true
