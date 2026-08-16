@@ -1,4 +1,3 @@
-if not game:IsLoaded() then game.Loaded:Wait() end
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
@@ -7,7 +6,6 @@ local Debris            = game:GetService("Debris")
 
 local Trove           = require(ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Trove"))
 local EventController = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("EventController"))
-local EffectController = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("EffectController"))
 
 local EVENT_NAME          = "Meowl"
 local FLY_SPEED           = 50
@@ -22,24 +20,7 @@ local MeowlAssets = ReplicatedStorage:WaitForChild("Controllers")
     :WaitForChild("Meowl")
 
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
-
--- ─── Wait for Blink ───────────────────────────────────────────────────────────
-
-local blinkFired = Instance.new("BindableEvent")
-
-local origActivate = EffectController.Activate
-EffectController.Activate = function(self, effectName, ...)
-    if effectName == "Blink" then
-        blinkFired:Fire()
-    end
-    return origActivate(self, effectName, ...)
-end
-
-blinkFired.Event:Wait()
-blinkFired:Destroy()
-EffectController.Activate = origActivate
-
--- ─── Session state ────────────────────────────────────────────────────────────
+task.wait(1)
 
 local sessionTrove      = Trove.new()
 local spawnedMeowls     = {}
@@ -57,7 +38,6 @@ for _, obj in objects do
 end
 
 local meowlsFolder = workspace:WaitForChild("Meowls")
-repeat task.wait() until #meowlsFolder:GetChildren() > 0
 
 for _, part in ipairs(meowlsFolder:GetChildren()) do
     if part:IsA("BasePart") then
@@ -97,11 +77,17 @@ for _, part in ipairs(meowlsFolder:GetChildren()) do
         sessionTrove:Add(function() attackTrack:Stop(0) attackTrack:Destroy() end)
 
         sessionTrove:Add(part:GetAttributeChangedSignal("Flying"):Connect(function()
-            if part:GetAttribute("Flying") then flyTrack:Play() else flyTrack:Stop() end
+            if part:GetAttribute("Flying") then
+                flyTrack:Play()
+            else
+                flyTrack:Stop()
+            end
         end))
 
         sessionTrove:Add(part:GetAttributeChangedSignal("Attack"):Connect(function()
-            if part:GetAttribute("Attack") then attackTrack:Play() end
+            if part:GetAttribute("Attack") then
+                attackTrack:Play()
+            end
         end))
     end
 end
@@ -129,6 +115,7 @@ local function doBurst(target)
     if burst:IsA("BasePart") then
         burst.CFrame = CFrame.new(target.PrimaryPart.Position)
     end
+    -- enable all particles/beams inside
     for _, v in ipairs(burst:GetDescendants()) do
         if v:IsA("ParticleEmitter") then
             v.Enabled = true
