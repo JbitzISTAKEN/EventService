@@ -1,12 +1,33 @@
-
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 local RunService        = game:GetService("RunService")
 local Debris            = game:GetService("Debris")
 
-local Trove           = require(ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Trove"))
-local EventController = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("EventController"))
+-- Wait for the game to be fully loaded
+if not game:IsLoaded() then
+    game.Loaded:Wait()
+end
 
+local Trove            = require(ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Trove"))
+local EventController  = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("EventController"))
+local EffectController = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("EffectController"))
+
+-- Wait for the MeowlEvent effect to start
+local meowlEventStarted = false
+local origRun = EffectController.Run
+EffectController.Run = function(self, tag, effect, ...)
+    if tag == "MeowlEvent" then
+        meowlEventStarted = true
+        print("[MeowlEvent] Effect started:", effect)
+    end
+    return origRun(self, tag, effect, ...)
+end
+
+while not meowlEventStarted do
+    task.wait()
+end
+-- In a LocalScript
+print("𒉭")
 local EVENT_NAME          = "Meowl"
 local FLY_SPEED           = 50
 local REACH_DIST          = 5
@@ -18,9 +39,6 @@ local MeowlAssets = ReplicatedStorage:WaitForChild("Controllers")
     :WaitForChild("EventController")
     :WaitForChild("Events")
     :WaitForChild("Meowl")
-
-repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
-task.wait(0.85)
 
 local sessionTrove      = Trove.new()
 local spawnedMeowls     = {}
@@ -259,4 +277,6 @@ sessionTrove:Add(task.spawn(function()
     table.clear(spawnedMeowls)
     table.clear(originalPositions)
     table.clear(recentlyTargeted)
+    -- Restore the original EffectController.Run
+    EffectController.Run = origRun
 end))
