@@ -49,6 +49,8 @@ local originalPositions = {}
 local recentlyTargeted  = {}
 local isActive          = true
 
+-- ─── Hitbox parts only — controller's observeTag owns the visuals ─────────────
+
 local objects = game:GetObjects("rbxassetid://139716127145162")
 for _, obj in objects do
     obj.Name   = "Meowls"
@@ -66,46 +68,13 @@ for _, part in ipairs(meowlsFolder:GetChildren()) do
         part:SetAttribute("Attack", false)
         originalPositions[part] = part.CFrame
         table.insert(spawnedMeowls, part)
-
-        local visual    = MeowlAssets:WaitForChild("Meowl"):Clone()
-        visual.Parent   = workspace
-        sessionTrove:Add(visual)
-
-        local weld      = Instance.new("Weld")
-        weld.Part0      = visual.PrimaryPart
-        weld.Part1      = part
-        weld.C0         = visual.PrimaryPart.PivotOffset
-        weld.Parent     = visual.PrimaryPart
-
-        local animator  = visual.AnimationController.Animator
-
-        local idleTrack        = animator:LoadAnimation(MeowlAssets:WaitForChild("Idle"))
-        idleTrack.Priority     = Enum.AnimationPriority.Idle
-        idleTrack.Looped       = true
-        idleTrack:Play()
-        sessionTrove:Add(function() idleTrack:Stop(0) idleTrack:Destroy() end)
-
-        local flyTrack         = animator:LoadAnimation(MeowlAssets:WaitForChild("Fly"))
-        flyTrack.Priority      = Enum.AnimationPriority.Action
-        flyTrack.Looped        = true
-        sessionTrove:Add(function() flyTrack:Stop(0) flyTrack:Destroy() end)
-
-        local attackTrack      = animator:LoadAnimation(MeowlAssets:WaitForChild("Attack"))
-        attackTrack.Priority   = Enum.AnimationPriority.Action2
-        attackTrack.Looped     = false
-        sessionTrove:Add(function() attackTrack:Stop(0) attackTrack:Destroy() end)
-
-        sessionTrove:Add(part:GetAttributeChangedSignal("Flying"):Connect(function()
-            if part:GetAttribute("Flying") then flyTrack:Play() else flyTrack:Stop() end
-        end))
-
-        sessionTrove:Add(part:GetAttributeChangedSignal("Attack"):Connect(function()
-            if part:GetAttribute("Attack") then attackTrack:Play() end
-        end))
+        -- no visual spawning here — controller handles it via observeTag
     end
 end
 
-local function doBurst(target: Model)
+-- ─── Burst ────────────────────────────────────────────────────────────────────
+
+local function doBurst(target)
     if not target or not target.PrimaryPart then return end
     local burst = MeowlAssets:WaitForChild("Burst"):Clone()
     burst.Parent = target.PrimaryPart
@@ -123,7 +92,9 @@ local function doBurst(target: Model)
     Debris:AddItem(burst, BURST_DURATION + 2)
 end
 
-local function flyToTarget(meowl: BasePart, target: Model): boolean
+-- ─── Movement ─────────────────────────────────────────────────────────────────
+
+local function flyToTarget(meowl, target)
     if not meowl or not meowl.Parent then return false end
     if not target or not target.Parent or not target.PrimaryPart then return false end
 
@@ -148,7 +119,7 @@ local function flyToTarget(meowl: BasePart, target: Model): boolean
     return false
 end
 
-local function flyBack(meowl: BasePart)
+local function flyBack(meowl)
     if not meowl or not meowl.Parent then return end
     local original = originalPositions[meowl]
     if not original then
@@ -182,7 +153,9 @@ local function flyBack(meowl: BasePart)
     end
 end
 
-local function selectTarget(): (Model?, BasePart?)
+-- ─── Attack loop ──────────────────────────────────────────────────────────────
+
+local function selectTarget()
     local now = workspace:GetServerTimeNow()
     for k, t in pairs(recentlyTargeted) do
         if now - t > 20 then recentlyTargeted[k] = nil end
