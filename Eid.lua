@@ -1,4 +1,6 @@
 -- LocalScript: Eid Balloon Client Spawner
+if not game:IsLoaded() then game.Loaded:Wait() end
+
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 local HttpService       = game:GetService("HttpService")
@@ -8,6 +10,7 @@ local Trove            = require(ReplicatedStorage.Packages.Trove)
 local EventController  = require(ReplicatedStorage.Controllers.EventController)
 local ClientEventUtils = require(ReplicatedStorage.Controllers.EventController.ClientEventUtils)
 print("hehe")
+
 local EVENT_NAME             = "Eid"
 local TAG_NAME               = "EidBalloon"
 local BALLOON_COUNT          = 10
@@ -48,6 +51,7 @@ end
 
 local WANDER_PART = events:WaitForChild("Eid"):WaitForChild("Wander")
 
+-- Gate: spoofer's fake entry must be queryable before any downstream logic runs
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
 
 local burstAsset = ReplicatedStorage.Controllers.EventController.Events.Eid.Burst
