@@ -9,7 +9,7 @@ local RunService        = game:GetService("RunService")
 local Trove            = require(ReplicatedStorage.Packages.Trove)
 local EventController  = require(ReplicatedStorage.Controllers.EventController)
 local ClientEventUtils = require(ReplicatedStorage.Controllers.EventController.ClientEventUtils)
-print("zzz")
+print("hehe")
 
 local EVENT_NAME             = "Eid"
 local TAG_NAME               = "EidBalloon"
@@ -43,12 +43,18 @@ local BALLOON_TRAITS = {
 
 local events = workspace:WaitForChild("Events")
 
-local model = game:GetObjects("rbxassetid://104189817203567")[1]
-if model then
-	model.Name   = "Eid"
-	model.Parent = events
+-- Parent the model first, then wait for it to exist in the tree
+-- GetObjects is sync but Parent assignment yields one frame before WaitForChild sees it
+local existingEid = events:FindFirstChild("Eid")
+if not existingEid then
+	local model = game:GetObjects("rbxassetid://104189817203567")[1]
+	if model then
+		model.Name   = "Eid"
+		model.Parent = events
+	end
 end
 
+-- Now safe — either we just parented it or it was already there
 local WANDER_PART = events:WaitForChild("Eid"):WaitForChild("Wander")
 
 -- Gate: spoofer's fake entry must be queryable before any downstream logic runs
