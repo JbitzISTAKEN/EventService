@@ -1,5 +1,6 @@
 -- LocalScript: Glitch Event — zero remotes, pure client
--- Fix: asset loads as Model, not BasePart — PrimaryPart used for size + pivot
+-- Hole: ReplicatedStorage.Controllers.EventController.Events.Glitch.Hole
+-- VFX assets: game:GetObjects for sky + ground effects
 
 local RunService        = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -11,9 +12,10 @@ local VFX             = require(ReplicatedStorage.Shared.VFX)
 local SoundController = require(ReplicatedStorage.Controllers.SoundController)
 local CARPET_CHECK    = require(ReplicatedStorage.Shared.SharedEventUtils)
 
+local EventScript = ReplicatedStorage.Controllers.EventController.Events.Glitch
+
 -- ─── Config ──────────────────────────────────────────────────────────────────
 
-local HOLE_ASSET_ID  = "rbxassetid://128681880971198"
 local HOLE_ORIGIN_X  = -410.752
 local HOLE_ORIGIN_Y  = -9.782
 local COOLDOWN       = 20
@@ -21,30 +23,20 @@ local TICK_MIN       = 4.0
 local TICK_MAX       = 8.0
 local FORCE_IDLE_DUR = 1.5
 
--- ─── Asset load ──────────────────────────────────────────────────────────────
+-- ─── VFX assets (sky + ground) from GetObjects ───────────────────────────────
 
-local holeTemplate: Model? = nil
+local VFX_ASSET_ID = "rbxassetid://128681880971198"
+local vfxObjects: { Instance } = {}
 
-local function loadHoleAsset()
-    local objects = game:GetObjects(HOLE_ASSET_ID)
-    if not objects or #objects == 0 then
-        warn("[Glitch] Asset load failed:", HOLE_ASSET_ID)
-        return
+task.spawn(function()
+    local loaded = game:GetObjects(VFX_ASSET_ID)
+    for _, obj in ipairs(loaded) do
+        obj.Parent = workspace
+        table.insert(vfxObjects, obj)
     end
-    local obj = objects[1]
-    obj.Name = "Glitch"
-    -- Park it off-world until cloned — don't parent to workspace yet
-    holeTemplate = obj
-end
-
-loadHoleAsset()
+end)
 
 -- ─── Helpers ─────────────────────────────────────────────────────────────────
-
-local function getPrimarySize(model: Model): Vector3
-    local pp = model.PrimaryPart
-    return pp and pp.Size or Vector3.new(4, 1, 4)
-end
 
 local function hasGlitchedTrait(animal: Model): boolean
     local json = animal:GetAttribute("Traits")
@@ -62,24 +54,29 @@ local function isOnCarpet(animal: Model): boolean
     return CARPET_CHECK.isPointInCarpet(animal.PrimaryPart.Position)
 end
 
--- ─── Hole physics — exact curve from decompiled PostSimulation ────────────────
+-- ─── Hole spawn — pulls template from EventScript.Hole ───────────────────────
 --
--- t < 0.15       → y = 0
--- 0.15 ≤ t < 1  → y = -(norm² × 98.1)       drop in
--- 1   ≤ t < 1.5 → y = 15.696 - (rise² × 98.1) pop back up
--- t ≥ 1.5       → disconnect, destroy
+-- Physics curve exact from decompiled PostSimulation handler:
+-- t < 0.15       → y = 0                          (freeze)
+-- 0.15 ≤ t < 1  → y = -(norm² × 98.1)            (drop in)
+-- 1   ≤ t < 1.5 → y = 15.696 - (rise² × 98.1)   (pop back)
+-- t ≥ 1.5       → disconnect + destroy
 
 local function spawnHole(animal: Model, triggerTime: number, trove: typeof(Trove.new()))
-    if not holeTemplate or not animal.PrimaryPart then return end
+    local holeTemplate = EventScript:FindFirstChild("Hole")
+    if not holeTemplate then
+        warn("[Glitch] EventScript.Hole not found")
+        return
+    end
+    if not animal.PrimaryPart then return end
 
     local hole = holeTemplate:Clone()
 
-    -- Model pivot — use PrimaryPart size, not hole.Size (was the crash)
-    local holeSize = getPrimarySize(hole)
+    -- Hole is a BasePart in EventScript — .Size is valid here
     hole:PivotTo(CFrame.new(
         HOLE_ORIGIN_X,
-        HOLE_ORIGIN_Y + holeSize.Y * 0.5,
-        animal.PrimaryPart.Position.Z + holeSize.Z * 0.5
+        HOLE_ORIGIN_Y + hole.Size.Y * 0.5,
+        animal.PrimaryPart.Position.Z + hole.Size.Z * 0.5
     ))
     hole.Parent = workspace
     VFX.enable(hole)
@@ -159,10 +156,10 @@ scriptTrove:Add(task.spawn(function()
 
         local candidates: { Model } = {}
         for _, animal in ipairs(CollectionService:GetTagged("Animal")) do
-            if not animal.PrimaryPart             then continue end
-            if recentlyTargeted[animal.Name]      then continue end
-            if not isOnCarpet(animal)             then continue end
-            if hasGlitchedTrait(animal)           then continue end
+            if not animal.PrimaryPart        then continue end
+            if recentlyTargeted[animal.Name] then continue end
+            if not isOnCarpet(animal)        then continue end
+            if hasGlitchedTrait(animal)      then continue end
             table.insert(candidates, animal)
         end
 
@@ -180,6 +177,11 @@ end))
 
 scriptTrove:Add(ReplicatedStorage:GetAttributeChangedSignal("GlitchEvent"):Connect(function()
     if not ReplicatedStorage:GetAttribute("GlitchEvent") then
+        -- Clean up VFX assets on event end
+        for _, obj in ipairs(vfxObjects) do
+            if obj and obj.Parent then obj:Destroy() end
+        end
+        table.clear(vfxObjects)
         scriptTrove:Destroy()
     end
 end))
