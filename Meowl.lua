@@ -34,7 +34,9 @@ while not (_G.EffectStartSignals and _G.EffectStartSignals[effectEventName]) do
     task.wait()
 end
 
-local MeowlAssets = ReplicatedStorage.Controllers.EventController.Events.Meowl
+local EventAssets  = ReplicatedStorage.Controllers.EventController.Events
+local MeowlAssets  = EventAssets:WaitForChild("Meowl")
+local burstAsset   = MeowlAssets:WaitForChild("Burst")
 
 local sessionTrove      = Trove.new()
 local spawnedMeowls     = {}
@@ -56,7 +58,6 @@ end
 
 local meowlsFolder = workspace:WaitForChild("Meowls")
 
--- visuals only — no AddTag, server already tagged them
 sessionTrove:Add(Observers.observeTag("MeowlEventMeowl", function(part)
     local addTrove = Trove.new()
 
@@ -113,7 +114,7 @@ end
 local function onBurst(animalName: string)
     for _, animal in ipairs(CollectionService:GetTagged("Animal")) do
         if animal.Name == animalName and animal.PrimaryPart then
-            sessionTrove:Add(ClientEventUtils.playBurst(MeowlAssets.Burst, animal.PrimaryPart, {
+            sessionTrove:Add(ClientEventUtils.playBurst(burstAsset, animal.PrimaryPart, {
                 ReplicatedStorage.Sounds.Events.Meowl.BrainrotHit,
                 ReplicatedStorage.Sounds.Events.Meowl.Flap,
             }))
