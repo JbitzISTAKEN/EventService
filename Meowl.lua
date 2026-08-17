@@ -49,52 +49,7 @@ local originalPositions = {}
 local recentlyTargeted  = {}
 local isActive          = true
 
--- ─── Track every animated Meowl model that gets parented to workspace ─────────
-
-local visualCount = 0
-local trackerConnection = workspace.DescendantAdded:Connect(function(desc)
-    if desc:IsA("Model") and desc.Name == "Meowl" then
-        visualCount += 1
-        local id = visualCount
-        warn(string.format(
-            "[MEOWL TRACKER] Visual #%d spawned | Parent: %s | Time: %.3f",
-            id,
-            tostring(desc.Parent),
-            os.clock()
-        ))
-        warn("[MEOWL TRACKER] Stack trace:\n" .. debug.traceback())
-
-        -- also watch who welds to it
-        desc.DescendantAdded:Connect(function(child)
-            if child:IsA("Weld") then
-                warn(string.format(
-                    "[MEOWL TRACKER] Visual #%d got Weld | Part0: %s | Part1: %s",
-                    id,
-                    tostring(child.Part0 and child.Part0.Name),
-                    tostring(child.Part1 and child.Part1.Name)
-                ))
-            end
-        end)
-    end
-end)
-
--- ─── Load asset and build visuals ─────────────────────────────────────────────
-
-print("[MEOWL DEBUG] Loading asset 139716127145162")
 local objects = game:GetObjects("rbxassetid://139716127145162")
-print("[MEOWL DEBUG] GetObjects returned " .. #objects .. " objects:")
-for i, obj in objects do
-    print(string.format("  [%d] %s (class: %s)", i, obj.Name, obj.ClassName))
-    if obj:IsA("Folder") or obj:IsA("Model") then
-        for _, child in obj:GetChildren() do
-            print(string.format("      child: %s (class: %s) CFrame: %s",
-                child.Name, child.ClassName,
-                child:IsA("BasePart") and tostring(child.CFrame) or "N/A"
-            ))
-        end
-    end
-end
-
 for _, obj in objects do
     obj.Name   = "Meowls"
     obj.Parent = workspace
@@ -102,30 +57,27 @@ for _, obj in objects do
 end
 
 local meowlsFolder = workspace:WaitForChild("Meowls")
-print("[MEOWL DEBUG] meowlsFolder children count: " .. #meowlsFolder:GetChildren())
 
 for _, part in ipairs(meowlsFolder:GetChildren()) do
     if part:IsA("BasePart") then
-        print(string.format("[MEOWL DEBUG] Registering part: %s at CFrame %s", part.Name, tostring(part.CFrame)))
-        part.Anchored   = true
-        part.CanCollide = false
+        part.Anchored        = true
+        part.CanCollide      = false
         part:SetAttribute("Flying", false)
         part:SetAttribute("Attack", false)
         originalPositions[part] = part.CFrame
         table.insert(spawnedMeowls, part)
 
-        print(string.format("[MEOWL DEBUG] Spawning visual for part: %s", part.Name))
-        local visual = MeowlAssets:WaitForChild("Meowl"):Clone()
-        visual.Parent = workspace
+        local visual    = MeowlAssets:WaitForChild("Meowl"):Clone()
+        visual.Parent   = workspace
         sessionTrove:Add(visual)
 
-        local weld     = Instance.new("Weld")
-        weld.Part0     = visual.PrimaryPart
-        weld.Part1     = part
-        weld.C0        = visual.PrimaryPart.PivotOffset
-        weld.Parent    = visual.PrimaryPart
+        local weld      = Instance.new("Weld")
+        weld.Part0      = visual.PrimaryPart
+        weld.Part1      = part
+        weld.C0         = visual.PrimaryPart.PivotOffset
+        weld.Parent     = visual.PrimaryPart
 
-        local animator = visual.AnimationController.Animator
+        local animator  = visual.AnimationController.Animator
 
         local idleTrack        = animator:LoadAnimation(MeowlAssets:WaitForChild("Idle"))
         idleTrack.Priority     = Enum.AnimationPriority.Idle
@@ -153,11 +105,6 @@ for _, part in ipairs(meowlsFolder:GetChildren()) do
     end
 end
 
-print("[MEOWL DEBUG] Total parts registered: " .. #spawnedMeowls)
-print("[MEOWL DEBUG] Watching workspace for any additional Meowl model spawns from other sources...")
-
--- ─── Burst ────────────────────────────────────────────────────────────────────
-
 local function doBurst(target: Model)
     if not target or not target.PrimaryPart then return end
     local burst = MeowlAssets:WaitForChild("Burst"):Clone()
@@ -175,8 +122,6 @@ local function doBurst(target: Model)
     end
     Debris:AddItem(burst, BURST_DURATION + 2)
 end
-
--- ─── Movement ─────────────────────────────────────────────────────────────────
 
 local function flyToTarget(meowl: BasePart, target: Model): boolean
     if not meowl or not meowl.Parent then return false end
@@ -237,8 +182,6 @@ local function flyBack(meowl: BasePart)
     end
 end
 
--- ─── Attack loop ──────────────────────────────────────────────────────────────
-
 local function selectTarget(): (Model?, BasePart?)
     local now = workspace:GetServerTimeNow()
     for k, t in pairs(recentlyTargeted) do
@@ -289,12 +232,9 @@ sessionTrove:Add(task.spawn(function()
     end
 end))
 
--- ─── Cleanup ──────────────────────────────────────────────────────────────────
-
 sessionTrove:Add(task.spawn(function()
     while EventController:GetActiveEventData(EVENT_NAME) do task.wait() end
     isActive = false
-    trackerConnection:Disconnect()
     sessionTrove:Destroy()
     table.clear(spawnedMeowls)
     table.clear(originalPositions)
