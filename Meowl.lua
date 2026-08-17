@@ -3,32 +3,22 @@ local CollectionService = game:GetService("CollectionService")
 local RunService        = game:GetService("RunService")
 local Debris            = game:GetService("Debris")
 
--- Wait for the game to be fully loaded
+-- Wait for game to load
 if not game:IsLoaded() then
     game.Loaded:Wait()
 end
 
-local Trove            = require(ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Trove"))
-local EventController  = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("EventController"))
-local EffectController = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("EffectController"))
+local Trove           = require(ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Trove"))
+local EventController = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("EventController"))
 
--- Wait for the MeowlEvent effect to start
-local meowlEventStarted = false
-local origRun = EffectController.Run
-EffectController.Run = function(self, tag, effect, ...)
-    if tag == "MeowlEvent" then
-        meowlEventStarted = true
-        print("[MeowlEvent] Effect started:", effect)
-    end
-    return origRun(self, tag, effect, ...)
-end
+local EVENT_NAME      = "Meowl"
+local effectEventName = EVENT_NAME:gsub("%s+", "") .. "Event"  -- "MeowlEvent"
 
-while not meowlEventStarted do
+-- Wait for the spoofer to set the attribute (effect started)
+while not ReplicatedStorage:GetAttribute(effectEventName) do
     task.wait()
 end
--- In a LocalScript
-print("𒉭")
-local EVENT_NAME          = "Meowl"
+
 local FLY_SPEED           = 50
 local REACH_DIST          = 5
 local ATTACK_COOLDOWN_MIN = 5
@@ -47,7 +37,6 @@ local recentlyTargeted  = {}
 local isActive          = true
 
 -- ─── Load meowls folder from asset ───────────────────────────────────────────
-
 local objects = game:GetObjects("rbxassetid://139716127145162")
 for _, obj in objects do
     obj.Name   = "Meowls"
@@ -111,7 +100,6 @@ for _, part in ipairs(meowlsFolder:GetChildren()) do
 end
 
 -- ─── Helpers ──────────────────────────────────────────────────────────────────
-
 local function getAnimals()
     return CollectionService:GetTagged("Animal")
 end
@@ -125,7 +113,6 @@ local function setAttr(part, key, val)
 end
 
 -- ─── Burst ────────────────────────────────────────────────────────────────────
-
 local function doBurst(target)
     if not target or not target.PrimaryPart then return end
     local burst = MeowlAssets:WaitForChild("Burst"):Clone()
@@ -133,7 +120,6 @@ local function doBurst(target)
     if burst:IsA("BasePart") then
         burst.CFrame = CFrame.new(target.PrimaryPart.Position)
     end
-    -- enable all particles/beams inside
     for _, v in ipairs(burst:GetDescendants()) do
         if v:IsA("ParticleEmitter") then
             v.Enabled = true
@@ -152,7 +138,6 @@ local function doBurst(target)
 end
 
 -- ─── Fly to target ────────────────────────────────────────────────────────────
-
 local function flyToTarget(meowl, target)
     if not meowl or not meowl.Parent then return false end
     if not target or not target.Parent or not target.PrimaryPart then return false end
@@ -179,7 +164,6 @@ local function flyToTarget(meowl, target)
 end
 
 -- ─── Fly back ─────────────────────────────────────────────────────────────────
-
 local function flyBack(meowl)
     if not meowl or not meowl.Parent then return end
     local original = originalPositions[meowl]
@@ -215,7 +199,6 @@ local function flyBack(meowl)
 end
 
 -- ─── Select target ────────────────────────────────────────────────────────────
-
 local function selectTarget()
     local now = workspace:GetServerTimeNow()
     for k, t in pairs(recentlyTargeted) do
@@ -243,7 +226,6 @@ local function selectTarget()
 end
 
 -- ─── Attack loop ──────────────────────────────────────────────────────────────
-
 sessionTrove:Add(task.spawn(function()
     while isActive do
         task.wait(math.random(ATTACK_COOLDOWN_MIN, ATTACK_COOLDOWN_MAX))
@@ -269,7 +251,6 @@ sessionTrove:Add(task.spawn(function()
 end))
 
 -- ─── Shutdown ─────────────────────────────────────────────────────────────────
-
 sessionTrove:Add(task.spawn(function()
     while EventController:GetActiveEventData(EVENT_NAME) do task.wait() end
     isActive = false
@@ -277,6 +258,4 @@ sessionTrove:Add(task.spawn(function()
     table.clear(spawnedMeowls)
     table.clear(originalPositions)
     table.clear(recentlyTargeted)
-    -- Restore the original EffectController.Run
-    EffectController.Run = origRun
 end))
