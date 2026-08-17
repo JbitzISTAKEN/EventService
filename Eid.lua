@@ -7,7 +7,7 @@ local RunService        = game:GetService("RunService")
 local Trove            = require(ReplicatedStorage.Packages.Trove)
 local EventController  = require(ReplicatedStorage.Controllers.EventController)
 local ClientEventUtils = require(ReplicatedStorage.Controllers.EventController.ClientEventUtils)
-
+print("hehe")
 local EVENT_NAME             = "Eid"
 local TAG_NAME               = "EidBalloon"
 local BALLOON_COUNT          = 10
