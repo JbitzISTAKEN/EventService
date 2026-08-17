@@ -5,6 +5,7 @@ local CollectionService = game:GetService("CollectionService")
 local HttpService       = game:GetService("HttpService")
 local RunService        = game:GetService("RunService")
 local Players           = game:GetService("Players")
+local PathfindingService = game:GetService("PathfindingService")
 
 local Trove           = require(ReplicatedStorage.Packages.Trove)
 local EventController = require(ReplicatedStorage.Controllers.EventController)
@@ -53,76 +54,24 @@ do
     end
 end
 
--- ─── Walkable tag set — mirrors NpcPathfinding exactly ───────────────────────
+-- ─── Raycast — Easter pattern ─────────────────────────────────────────────────
 
-local WALKABLE_TAGS = { "Ground", "Carpet" }
-local walkableParts = {}
-local walkableSet   = {}
-local filterDirty   = true
-
-local groundRayParams = RaycastParams.new()
-groundRayParams.FilterType                 = Enum.RaycastFilterType.Include
-groundRayParams.FilterDescendantsInstances = {}
-groundRayParams.IgnoreWater                = true
-
-local function addWalkable(inst)
-    if not inst then return end
-    if not inst:IsA("BasePart") then return end
-    if walkableSet[inst] then return end
-    walkableSet[inst] = true
-    table.insert(walkableParts, inst)
-    filterDirty = true
+local function stickToGround(position)
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Include
+    params.FilterDescendantsInstances = {
+        workspace:FindFirstChild("Map") or workspace,
+        workspace.Terrain,
+    }
+    local result = workspace:Raycast(
+        position + Vector3.new(0, 10, 0),
+        Vector3.new(0, -20, 0),
+        params
+    )
+    return result and result.Position + Vector3.new(0, ROACH_Y_OFFSET, 0) or position
 end
 
-local function removeWalkable(inst)
-    if not inst then return end
-    if not walkableSet[inst] then return end
-    walkableSet[inst] = nil
-    for i = #walkableParts, 1, -1 do
-        if walkableParts[i] == inst then
-            table.remove(walkableParts, i)
-            break
-        end
-    end
-    filterDirty = true
-end
-
-for _, tag in ipairs(WALKABLE_TAGS) do
-    for _, inst in ipairs(CollectionService:GetTagged(tag)) do
-        addWalkable(inst)
-    end
-    CollectionService:GetInstanceAddedSignal(tag):Connect(addWalkable)
-    CollectionService:GetInstanceRemovedSignal(tag):Connect(removeWalkable)
-end
-
-local function refreshGroundFilter()
-    if filterDirty then
-        groundRayParams.FilterDescendantsInstances = walkableParts
-        filterDirty = false
-    end
-end
-
--- ─── stickToGround — exact NpcPathfinding contract ───────────────────────────
-
-local function stickToGround(position, yOffset, castUp, castDown)
-    if not position then return Vector3.new(0, 0, 0) end
-    local up   = castUp   or 10
-    local down = castDown or 50
-    local off  = yOffset  or ROACH_Y_OFFSET
-    refreshGroundFilter()
-    if #walkableParts == 0 then return position end
-    local origin = position + Vector3.new(0, up, 0)
-    local dir    = Vector3.new(0, -(up + down), 0)
-    local ok, result = pcall(function()
-        return workspace:Raycast(origin, dir, groundRayParams)
-    end)
-    if ok and result then
-        return result.Position + Vector3.new(0, off, 0)
-    end
-    return position
-end
-
--- ─── smoothTurn — exact NpcPathfinding contract ──────────────────────────────
+-- ─── Model valid + smooth turn ────────────────────────────────────────────────
 
 local function isModelValid(model)
     if not model then return false end
@@ -157,17 +106,12 @@ local function smoothTurn(model, newPos, flatDir, dt, turnSpeed)
         )
     local alpha = math.min(1, turnSpeed * dt)
     if not isModelValid(model) then return end
-    local ok, err = pcall(function()
+    pcall(function()
         model:PivotTo(currentRot:Lerp(targetCF, alpha))
     end)
-    if not ok then
-        warn("[Mexico] smoothTurn PivotTo failed:", err)
-    end
 end
 
--- ─── moveTo — waypoint-based, exact NpcPathfinding moveTo pattern ────────────
-
-local PathfindingService = game:GetService("PathfindingService")
+-- ─── Pathfinding ──────────────────────────────────────────────────────────────
 
 local DEFAULT_AGENT_PARAMS = {
     AgentRadius     = 2,
@@ -235,8 +179,6 @@ local function moveTo(model, targetPos, speed, opts)
         end
     end
 end
-
--- ─── chase — repath loop, exact NpcPathfinding chase pattern ─────────────────
 
 local function chase(model, getTargetPos, speed, stopDistance, maxTime, opts)
     if not isModelValid(model) then return false end
