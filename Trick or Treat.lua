@@ -5,6 +5,8 @@ local RunService             = game:GetService("RunService")
 local TweenService           = game:GetService("TweenService")
 local Players                = game:GetService("Players")
 
+if not game:IsLoaded() then game.Loaded:Wait() end
+
 local Packages        = ReplicatedStorage:WaitForChild("Packages")
 local Observers       = require(Packages.Observers)
 local Spr             = require(Packages.Spr)
@@ -14,15 +16,29 @@ local SharedAnimals   = require(ReplicatedStorage.Shared.Animals)
 
 local LocalPlayer = Players.LocalPlayer
 local EVENT_NAME  = "Trick or Treat"
-local effectEventName = EVENT_NAME:gsub("%s+", "") .. "Event"
+
+local function getEffectEventName()
+    for attr, val in ReplicatedStorage:GetAttributes() do
+        if type(val) == "boolean" and val and attr:sub(-5) == "Event" then
+            return attr
+        end
+    end
+end
 
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
+
+local effectEventName = getEffectEventName()
+if not effectEventName then
+    repeat
+        ReplicatedStorage.AttributeChanged:Wait()
+        effectEventName = getEffectEventName()
+    until effectEventName
+end
 
 while not (_G.EffectStartSignals and _G.EffectStartSignals[effectEventName]) do
     task.wait()
 end
 
-print("hey")
 local startedAt  = EventController:GetActiveEventData(EVENT_NAME).startedAt
 local eventTrove = Trove.new()
 local isActive   = true
