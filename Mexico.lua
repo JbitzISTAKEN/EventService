@@ -1,15 +1,15 @@
 if not game:IsLoaded() then game.Loaded:Wait() end
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local CollectionService = game:GetService("CollectionService")
-local HttpService       = game:GetService("HttpService")
-local RunService        = game:GetService("RunService")
-local Players           = game:GetService("Players")
+local ReplicatedStorage  = game:GetService("ReplicatedStorage")
+local CollectionService  = game:GetService("CollectionService")
+local HttpService        = game:GetService("HttpService")
+local RunService         = game:GetService("RunService")
+local Players            = game:GetService("Players")
 local PathfindingService = game:GetService("PathfindingService")
 
 local Trove           = require(ReplicatedStorage.Packages.Trove)
 local EventController = require(ReplicatedStorage.Controllers.EventController)
-print("hehey")
+
 -- ─── Config ───────────────────────────────────────────────────────────────────
 
 local EVENT_NAME       = "Mexico"
@@ -23,6 +23,7 @@ local ATTACK_COOLDOWN_MAX        = 10
 local PLAYER_ATTACK_COOLDOWN_MIN = 15
 local PLAYER_ATTACK_COOLDOWN_MAX = 25
 local CHASE_MAX_TIME             = 30
+local CHASE_REACH_DIST           = 5  -- how close chase needs to get before "reached"
 local RECENT_ANIMAL_COOLDOWN     = 15
 local RECENT_PLAYER_COOLDOWN     = 30
 
@@ -54,7 +55,7 @@ do
     end
 end
 
--- ─── Raycast — Easter pattern ─────────────────────────────────────────────────
+-- ─── Raycast ──────────────────────────────────────────────────────────────────
 
 local function stickToGround(position)
     local params = RaycastParams.new()
@@ -88,27 +89,19 @@ local function smoothTurn(model, newPos, flatDir, dt, turnSpeed)
     if flatDir.Magnitude < 1e-4 then
         local look = model.PrimaryPart.CFrame.LookVector
         flatDir = Vector3.new(look.X, 0, look.Z)
-        if flatDir.Magnitude < 1e-4 then
-            flatDir = Vector3.new(0, 0, 1)
-        end
+        if flatDir.Magnitude < 1e-4 then flatDir = Vector3.new(0, 0, 1) end
     end
     flatDir = flatDir.Unit
     if not isModelValid(model) then return end
     local pPart = model.PrimaryPart
     if not pPart then return end
     local currentCFrame = pPart.CFrame
-    local targetCF = CFrame.new(newPos, newPos + flatDir)
+    local targetCF  = CFrame.new(newPos, newPos + flatDir)
     local currentRot = CFrame.new(newPos)
-        * CFrame.fromMatrix(
-            Vector3.zero,
-            currentCFrame.RightVector,
-            Vector3.new(0, 1, 0)
-        )
+        * CFrame.fromMatrix(Vector3.zero, currentCFrame.RightVector, Vector3.new(0, 1, 0))
     local alpha = math.min(1, turnSpeed * dt)
     if not isModelValid(model) then return end
-    pcall(function()
-        model:PivotTo(currentRot:Lerp(targetCF, alpha))
-    end)
+    pcall(function() model:PivotTo(currentRot:Lerp(targetCF, alpha)) end)
 end
 
 -- ─── Pathfinding ──────────────────────────────────────────────────────────────
@@ -185,8 +178,8 @@ local function chase(model, getTargetPos, speed, stopDistance, maxTime, opts)
     stopDistance = stopDistance or 3
     maxTime      = maxTime      or 30
     opts         = opts         or {}
-    local repathInterval = opts.repathInterval            or 0.6
-    local moveRepath     = opts.targetMoveRepathThreshold or 5
+    local repathInterval = opts.repathInterval            or 0.5
+    local moveRepath     = opts.targetMoveRepathThreshold or 3
     local shouldStop     = opts.shouldStop
     local startClock    = os.clock()
     local lastRepath    = -math.huge
@@ -201,7 +194,9 @@ local function chase(model, getTargetPos, speed, stopDistance, maxTime, opts)
         if not targetPos then return false end
         local pPart = model.PrimaryPart
         if not pPart then return false end
-        if (targetPos - pPart.Position).Magnitude <= stopDistance then return true end
+        -- direct distance check — if within stopDistance we're done
+        local directDist = (targetPos - pPart.Position).Magnitude
+        if directDist <= stopDistance then return true end
         local now        = os.clock()
         local needRepath = false
         if not waypoints or wpIndex > #waypoints then
@@ -220,7 +215,19 @@ local function chase(model, getTargetPos, speed, stopDistance, maxTime, opts)
             lastRepath    = now
             lastTargetPos = targetPos
             if not waypoints or #waypoints == 0 then
-                task.wait(0.1)
+                -- path failed — try straight-line nudge toward target
+                local dt2 = RunService.Heartbeat:Wait()
+                if isModelValid(model) and model.PrimaryPart then
+                    local pp3     = model.PrimaryPart
+                    local toTgt   = targetPos - pp3.Position
+                    local flatVec = Vector3.new(toTgt.X, 0, toTgt.Z)
+                    if flatVec.Magnitude > 0.1 then
+                        local flatDir = flatVec.Unit
+                        local newXZ   = pp3.Position + flatDir * math.min(speed * dt2, flatVec.Magnitude)
+                        local newPos  = stickToGround(newXZ)
+                        smoothTurn(model, newPos, flatDir, dt2, DEFAULT_TURN_SPEED)
+                    end
+                end
                 continue
             end
         end
@@ -373,7 +380,7 @@ local function followAndAttack(roachData, targetAnimal)
                 return targetAnimal.PrimaryPart.Position
             end,
             ROACH_SPEED,
-            3,
+            CHASE_REACH_DIST,
             CHASE_MAX_TIME,
             {
                 shouldStop = function()
@@ -389,9 +396,33 @@ local function followAndAttack(roachData, targetAnimal)
             roach:SetAttribute("Instrument",      "Sombrero")
             roach:SetAttribute("AttackAnimation", (roach:GetAttribute("AttackAnimation") or 0) + 1)
 
+            -- close the remaining gap at full speed before applying hat
+            local closeStart = os.clock()
+            while targetAnimal and targetAnimal.Parent and targetAnimal.PrimaryPart
+                and not isPaused
+                and os.clock() - closeStart < PUT_HAT_DURATION + 1
+            do
+                if not roach.Parent or not roach.PrimaryPart then break end
+                local tgtPos = targetAnimal.PrimaryPart.Position
+                local myPos  = roach.PrimaryPart.Position
+                local diff   = tgtPos - myPos
+                local dist   = diff.Magnitude
+
+                if dist <= 1.5 then break end  -- genuinely touching now
+
+                local dt     = task.wait()
+                local dir    = diff.Unit
+                local flat   = Vector3.new(dir.X, 0, dir.Z)
+                if flat.Magnitude > 1e-4 then
+                    flat = flat.Unit
+                    local newPos = stickToGround(myPos + dir * math.min(ROACH_SPEED * dt, dist))
+                    roach:PivotTo(CFrame.new(newPos, newPos + flat))
+                end
+            end
+
+            -- hat placement micro-loop — keep pressed against target
             local elapsed  = 0
             local lastTime = os.clock()
-
             while elapsed < PUT_HAT_DURATION
                 and targetAnimal and targetAnimal.Parent and targetAnimal.PrimaryPart
                 and not isPaused
@@ -400,17 +431,18 @@ local function followAndAttack(roachData, targetAnimal)
                 local dt  = now - lastTime
                 lastTime  = now
                 elapsed  += dt
-
                 local tgtPos = targetAnimal.PrimaryPart.Position
                 local myPos  = roach.PrimaryPart.Position
                 local diff   = tgtPos - myPos
                 local dist   = diff.Magnitude
-
-                if dist > 0.5 then
+                if dist > 0.3 then
                     local dir    = diff.Unit
-                    local flat   = Vector3.new(dir.X, 0, dir.Z).Unit
-                    local newPos = stickToGround(myPos + dir * math.min(ROACH_SPEED * dt, dist))
-                    roach:PivotTo(CFrame.new(newPos, newPos + flat))
+                    local flat   = Vector3.new(dir.X, 0, dir.Z)
+                    if flat.Magnitude > 1e-4 then
+                        flat = flat.Unit
+                        local newPos = stickToGround(myPos + dir * math.min(ROACH_SPEED * dt, dist))
+                        roach:PivotTo(CFrame.new(newPos, newPos + flat))
+                    end
                 end
                 task.wait()
             end
