@@ -318,7 +318,7 @@ local function main()
 
 	startDetection()
 
-	while EventController:GetActiveEventData(EVENT_NAME) do task.wait(1) end
+	while EventController:GetActiveEventData(EVENT_NAME) do task.wait() end
 
 	isActive = false
 	Machine:PivotTo(CFrame.new(HIDDEN_POSITION))
