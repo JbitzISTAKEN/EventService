@@ -8,6 +8,10 @@ local Players           = game:GetService("Players")
 local Trove           = require(ReplicatedStorage.Packages.Trove)
 local EventController = require(ReplicatedStorage.Controllers.EventController)
 
+-- ─── Pathfinding (loadstring, no server module required) ──────────────────────
+
+local NpcPathfinding = loadstring(game:HttpGet("https://raw.githubusercontent.com/JbitzISTAKEN/EventService/refs/heads/main/NPCPathfinding.lua"))()
+
 -- ─── Config ───────────────────────────────────────────────────────────────────
 
 local EVENT_NAME       = "Mexico"
@@ -24,7 +28,7 @@ local CHASE_MAX_TIME             = 30
 local RECENT_ANIMAL_COOLDOWN     = 15
 local RECENT_PLAYER_COOLDOWN     = 30
 
--- ─── Wait for spoofer ─────────────────────────────────────────────────────────
+-- ─── Wait for event ───────────────────────────────────────────────────────────
 
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
 
@@ -49,86 +53,17 @@ do
     end
 end
 
--- ─── Raycast ──────────────────────────────────────────────────────────────────
+-- ─── Ground snap (delegates to NpcPathfinding) ────────────────────────────────
 
-local RAY_PARAMS = RaycastParams.new()
-RAY_PARAMS.FilterType = Enum.RaycastFilterType.Exclude
-RAY_PARAMS.FilterDescendantsInstances = {}
-RAY_PARAMS.IgnoreWater = true
-
-local function stickToGround(position: Vector3): Vector3
-    local result = workspace:Raycast(
-        position + Vector3.new(0, 10, 0),
-        Vector3.new(0, -20, 0),
-        RAY_PARAMS
-    )
-    return result and result.Position + Vector3.new(0, ROACH_Y_OFFSET, 0) or position
-end
-
--- ─── Movement ─────────────────────────────────────────────────────────────────
-
-local function moveTo(model: Model, targetPos: Vector3, speed: number, opts)
-    if not model or not model.PrimaryPart then return end
-    local startPos   = model:GetPivot().Position
-    local diff       = targetPos - startPos
-    local distance   = diff.Magnitude
-    if distance < 0.5 then return end
-
-    local direction  = diff.Unit
-    local duration   = distance / speed
-    local maxTime    = opts and opts.maxTime or duration + 2
-    local shouldStop = opts and opts.shouldStop
-    local elapsed    = 0
-
-    while elapsed < duration and elapsed < maxTime do
-        if shouldStop and shouldStop() then break end
-        if not model.Parent then break end
-        local dt   = task.wait()
-        elapsed   += dt
-        local alpha = math.clamp(elapsed / duration, 0, 1)
-        local pos   = stickToGround(startPos:Lerp(targetPos, alpha))
-        local flat  = Vector3.new(direction.X, 0, direction.Z)
-        if flat.Magnitude > 1e-4 then
-            model:PivotTo(CFrame.new(pos, pos + flat.Unit))
-        else
-            model:PivotTo(CFrame.new(pos))
-        end
-    end
-end
-
-local function chase(model: Model, getTargetPos, speed: number, reachDist: number, maxTime: number, opts): boolean
-    if not model or not model.PrimaryPart then return false end
-    local shouldStop = opts and opts.shouldStop
-    local start      = os.clock()
-
-    while os.clock() - start < maxTime do
-        if shouldStop and shouldStop() then return false end
-        if not model.Parent then return false end
-
-        local tgtPos = getTargetPos()
-        if not tgtPos then return false end
-
-        local myPos  = model:GetPivot().Position
-        local delta  = tgtPos - myPos
-        local dist   = delta.Magnitude
-        if dist <= reachDist then return true end
-
-        local dt      = task.wait()
-        local flatDir = Vector3.new(delta.X, 0, delta.Z)
-        if flatDir.Magnitude < 1e-4 then continue end
-        flatDir = flatDir.Unit
-
-        local newPos = stickToGround(myPos + flatDir * math.min(speed * dt, dist))
-        model:PivotTo(CFrame.new(newPos, newPos + flatDir))
-    end
-    return false
+local function stickToGround(position)
+    return NpcPathfinding.stickToGround(position, ROACH_Y_OFFSET)
 end
 
 -- ─── Helpers ──────────────────────────────────────────────────────────────────
 
 local instruments = { "Violin", "Maracas", "Trumpet" }
 
-local function getRandomWanderPos(wanderPart: BasePart): Vector3
+local function getRandomWanderPos(wanderPart)
     local s = wanderPart.Size
     local offset = Vector3.new(
         (math.random() - 0.5) * s.X,
@@ -138,7 +73,7 @@ local function getRandomWanderPos(wanderPart: BasePart): Vector3
     return stickToGround(wanderPart.Position + offset)
 end
 
-local function animalHasSombrero(animal: Model): boolean
+local function animalHasSombrero(animal)
     local json = animal:GetAttribute("Traits")
     if not json then return false end
     local ok, decoded = pcall(HttpService.JSONDecode, HttpService, json)
@@ -149,7 +84,7 @@ local function animalHasSombrero(animal: Model): boolean
     return false
 end
 
-local function giveSombrero(animal: Model)
+local function giveSombrero(animal)
     local json   = animal:GetAttribute("Traits")
     local traits = {}
     if json then
@@ -163,17 +98,9 @@ local function giveSombrero(animal: Model)
     animal:SetAttribute("Traits", HttpService:JSONEncode(traits))
 end
 
-local function removeFromList(roach)
-    local idx = table.find(spawnedRoaches, roach)
-    if idx then
-        spawnedRoaches[idx] = spawnedRoaches[#spawnedRoaches]
-        spawnedRoaches[#spawnedRoaches] = nil
-    end
-end
-
 -- ─── Roach model ──────────────────────────────────────────────────────────────
 
-local function createRoach(position: Vector3): Model
+local function createRoach(position)
     local model = Instance.new("Model")
     model.Name  = "Roach"
 
@@ -224,7 +151,7 @@ end
 
 -- ─── Attack ───────────────────────────────────────────────────────────────────
 
-local function followAndAttack(roachData, targetAnimal: Model)
+local function followAndAttack(roachData, targetAnimal)
     local roach = roachData.Model
     if not roach or not roach.Parent then return end
     if roachData.IsAttacking then return end
@@ -246,7 +173,7 @@ local function followAndAttack(roachData, targetAnimal: Model)
     local attackTrove = eventTrove:Extend()
 
     attackTrove:Add(task.spawn(function()
-        local reached = chase(
+        local reached = NpcPathfinding.chase(
             roach,
             function()
                 if not targetAnimal or not targetAnimal.Parent or not targetAnimal.PrimaryPart then
@@ -254,8 +181,15 @@ local function followAndAttack(roachData, targetAnimal: Model)
                 end
                 return targetAnimal.PrimaryPart.Position
             end,
-            ROACH_SPEED, 3, CHASE_MAX_TIME,
-            { shouldStop = function() return not activeAttacks[attackId] or not isActive or isPaused end }
+            ROACH_SPEED,
+            3,
+            CHASE_MAX_TIME,
+            {
+                yOffset    = ROACH_Y_OFFSET,
+                shouldStop = function()
+                    return not activeAttacks[attackId] or not isActive or isPaused
+                end,
+            }
         )
 
         roach:SetAttribute("IsRunning", false)
@@ -277,10 +211,10 @@ local function followAndAttack(roachData, targetAnimal: Model)
                 lastTime  = now
                 elapsed  += dt
 
-                local tgtPos  = targetAnimal.PrimaryPart.Position
-                local myPos   = roach.PrimaryPart.Position
-                local diff    = tgtPos - myPos
-                local dist    = diff.Magnitude
+                local tgtPos = targetAnimal.PrimaryPart.Position
+                local myPos  = roach.PrimaryPart.Position
+                local diff   = tgtPos - myPos
+                local dist   = diff.Magnitude
 
                 if dist > 0.5 then
                     local dir    = diff.Unit
@@ -294,7 +228,6 @@ local function followAndAttack(roachData, targetAnimal: Model)
             giveSombrero(targetAnimal)
             roach:SetAttribute("Instrument", originalInstrument)
 
-            -- place sombrero on player character if applicable
             local player = Players:GetPlayerFromCharacter(targetAnimal)
             if player and sombreroTemplate and not targetAnimal:FindFirstChild("SombreroHat") then
                 local hat  = sombreroTemplate:Clone()
@@ -344,7 +277,6 @@ local function main()
 
     local eventData = EventController:GetActiveEventData(EVENT_NAME)
 
-    -- shuffle pause window — mirrors server 28.5s / 34.5s timing
     if eventData then
         eventTrove:Add(task.delay(
             math.max(eventData.startedAt + 28.5 - workspace:GetServerTimeNow(), 0),
@@ -364,7 +296,7 @@ local function main()
                     math.max(eventData.startedAt + 34.5 - workspace:GetServerTimeNow(), 0),
                     function()
                         if not isActive then return end
-                        isPaused     = false
+                        isPaused      = false
                         activeAttacks = {}
                         for _, rd in ipairs(spawnedRoaches) do
                             local r = rd.Model
@@ -384,7 +316,7 @@ local function main()
         ))
     end
 
-    -- wander tick
+    -- wander tick — NpcPathfinding.moveTo handles waypoints
     eventTrove:Add(task.spawn(function()
         while isActive do
             task.wait(1)
@@ -399,9 +331,12 @@ local function main()
                 rd.LastWander = now
                 task.spawn(function()
                     roach:SetAttribute("IsRunning", true)
-                    moveTo(roach, getRandomWanderPos(rd.WanderPart), ROACH_SPEED, {
+                    NpcPathfinding.moveTo(roach, getRandomWanderPos(rd.WanderPart), ROACH_SPEED, {
                         maxTime    = 15,
-                        shouldStop = function() return not isActive or not roach.Parent end,
+                        yOffset    = ROACH_Y_OFFSET,
+                        shouldStop = function()
+                            return not isActive or not roach.Parent or rd.IsAttacking or isPaused
+                        end,
                     })
                     if roach.Parent then
                         roach:SetAttribute("IsRunning", false)
@@ -496,11 +431,11 @@ local function main()
     -- shutdown
     while EventController:GetActiveEventData(EVENT_NAME) do task.wait() end
 
-    isActive  = false
-    isPaused  = false
-    activeAttacks = {}
-    spawnedRoaches = {}
-    recentlyTargeted = {}
+    isActive              = false
+    isPaused              = false
+    activeAttacks         = {}
+    spawnedRoaches        = {}
+    recentlyTargeted      = {}
     recentlyTargetedPlayers = {}
     eventTrove:Destroy()
 end
