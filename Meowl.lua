@@ -1,13 +1,13 @@
--- LocalScript: Meowl
 if not game:IsLoaded() then game.Loaded:Wait() end
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 local RunService        = game:GetService("RunService")
+local Debris            = game:GetService("Debris")
 
-local Trove            = require(ReplicatedStorage.Packages.Trove)
-local Observers        = require(ReplicatedStorage.Packages.Observers)
-local EventController  = require(ReplicatedStorage.Controllers.EventController)
+local Trove           = require(ReplicatedStorage.Packages.Trove)
+local Observers       = require(ReplicatedStorage.Packages.Observers)
+local EventController = require(ReplicatedStorage.Controllers.EventController)
 local ClientEventUtils = require(ReplicatedStorage.Controllers.EventController.ClientEventUtils)
 
 local EVENT_NAME = "Meowl"
@@ -34,9 +34,7 @@ while not (_G.EffectStartSignals and _G.EffectStartSignals[effectEventName]) do
     task.wait()
 end
 
-local EventAssets  = ReplicatedStorage.Controllers.EventController.Events
-local MeowlAssets  = EventAssets:WaitForChild("Meowl")
-local burstAsset   = MeowlAssets:WaitForChild("Burst")
+local MeowlAssets = ReplicatedStorage.Controllers.EventController.Events.Meowl
 
 local sessionTrove      = Trove.new()
 local spawnedMeowls     = {}
@@ -49,6 +47,8 @@ local REACH_DIST          = 5
 local ATTACK_COOLDOWN_MIN = 5
 local ATTACK_COOLDOWN_MAX = 10
 
+-- ─── Load model from asset ────────────────────────────────────────────────────
+
 local objects = game:GetObjects("rbxassetid://139716127145162")
 for _, obj in objects do
     obj.Name   = "Meowls"
@@ -58,19 +58,21 @@ end
 
 local meowlsFolder = workspace:WaitForChild("Meowls")
 
+-- ─── Visuals via observeTag — 1:1 with controller ────────────────────────────
+
 sessionTrove:Add(Observers.observeTag("MeowlEventMeowl", function(part)
     local addTrove = Trove.new()
 
-    local visual    = addTrove:Clone(MeowlAssets.Meowl)
-    visual.Parent   = workspace
+    local visual = addTrove:Clone(MeowlAssets.Meowl)
+    visual.Parent = workspace
 
-    local weld      = Instance.new("Weld")
-    weld.Part0      = visual.PrimaryPart
-    weld.Part1      = part
-    weld.C0         = visual.PrimaryPart.PivotOffset
-    weld.Parent     = visual.PrimaryPart
+    local weld     = Instance.new("Weld")
+    weld.Part0     = visual.PrimaryPart
+    weld.Part1     = part
+    weld.C0        = visual.PrimaryPart.PivotOffset
+    weld.Parent    = visual.PrimaryPart
 
-    local animator  = visual.AnimationController.Animator
+    local animator = visual.AnimationController.Animator
 
     local idleTrack = animator:LoadAnimation(MeowlAssets.Idle)
     idleTrack.Priority = Enum.AnimationPriority.Idle
@@ -78,7 +80,7 @@ sessionTrove:Add(Observers.observeTag("MeowlEventMeowl", function(part)
     idleTrack:Play()
     addTrove:Add(function() idleTrack:Stop(0) idleTrack:Destroy() end)
 
-    local flyTrack  = animator:LoadAnimation(MeowlAssets.Fly)
+    local flyTrack = animator:LoadAnimation(MeowlAssets.Fly)
     flyTrack.Priority = Enum.AnimationPriority.Action
     flyTrack.Looped   = true
     addTrove:Add(function() flyTrack:Stop(0) flyTrack:Destroy() end)
@@ -100,6 +102,8 @@ sessionTrove:Add(Observers.observeTag("MeowlEventMeowl", function(part)
     return addTrove:WrapClean()
 end, { workspace }))
 
+-- ─── Spawn hitbox parts ───────────────────────────────────────────────────────
+
 for _, part in ipairs(meowlsFolder:GetChildren()) do
     if part:IsA("BasePart") then
         part.Anchored   = true
@@ -107,14 +111,20 @@ for _, part in ipairs(meowlsFolder:GetChildren()) do
         part:SetAttribute("Flying", false)
         part:SetAttribute("Attack", false)
         originalPositions[part] = part.CFrame
+       CollectionService:AddTag(part, "MeowlEventMeowl")
         table.insert(spawnedMeowls, part)
     end
 end
 
+-- ─── Burst — 1:1 with controller OnLoad ──────────────────────────────────────
+-- Server fires animal.Name (string), we find the animal and call playBurst
+-- exactly as the controller does: playBurst(script.Burst, part, sounds)
+
 local function onBurst(animalName: string)
-    for _, animal in ipairs(CollectionService:GetTagged("Animal")) do
+    local animals = CollectionService:GetTagged("Animal")
+    for _, animal in ipairs(animals) do
         if animal.Name == animalName and animal.PrimaryPart then
-            sessionTrove:Add(ClientEventUtils.playBurst(burstAsset, animal.PrimaryPart, {
+            sessionTrove:Add(ClientEventUtils.playBurst(MeowlAssets.Burst, animal.PrimaryPart, {
                 ReplicatedStorage.Sounds.Events.Meowl.BrainrotHit,
                 ReplicatedStorage.Sounds.Events.Meowl.Flap,
             }))
@@ -122,6 +132,8 @@ local function onBurst(animalName: string)
         end
     end
 end
+
+-- ─── Movement ─────────────────────────────────────────────────────────────────
 
 local function flyToTarget(meowl: BasePart, target: Model): boolean
     if not meowl or not meowl.Parent then return false end
@@ -182,6 +194,8 @@ local function flyBack(meowl: BasePart)
     end
 end
 
+-- ─── Attack loop ──────────────────────────────────────────────────────────────
+
 local function selectTarget(): (Model?, BasePart?)
     local now = workspace:GetServerTimeNow()
     for k, t in pairs(recentlyTargeted) do
@@ -231,6 +245,8 @@ sessionTrove:Add(task.spawn(function()
         end)
     end
 end))
+
+-- ─── Cleanup ──────────────────────────────────────────────────────────────────
 
 sessionTrove:Add(task.spawn(function()
     while EventController:GetActiveEventData(EVENT_NAME) do task.wait() end
