@@ -350,7 +350,7 @@ local function main()
 	end)
 
 	while EventController:GetActiveEventData(EVENT_NAME) do
-		task.wait(1)
+		task.wait()
 	end
 
 	isActive = false
