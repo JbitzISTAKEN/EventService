@@ -3,7 +3,6 @@ local CollectionService = game:GetService("CollectionService")
 local RunService        = game:GetService("RunService")
 local Debris            = game:GetService("Debris")
 
--- Wait for game to load
 if not game:IsLoaded() then
     game.Loaded:Wait()
 end
@@ -14,8 +13,8 @@ local EventController = require(ReplicatedStorage:WaitForChild("Controllers"):Wa
 local EVENT_NAME      = "Meowl"
 local effectEventName = EVENT_NAME:gsub("%s+", "") .. "Event"  -- "MeowlEvent"
 
--- Wait for the spoofer to set the attribute (effect started)
-while not ReplicatedStorage:GetAttribute(effectEventName) do
+-- Wait until spoofer signals that the effect has started
+while not (_G.EffectStartSignals and _G.EffectStartSignals[effectEventName]) do
     task.wait()
 end
 
