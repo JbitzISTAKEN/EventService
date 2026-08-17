@@ -41,12 +41,12 @@ local BALLOON_TRAITS = {
 
 -- ─── Setup ────────────────────────────────────────────────────────────────────
 
+-- Gate first — spoofer must confirm event data before the model or Wander are touched
+repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
+
 local events = workspace:WaitForChild("Events")
 
--- Parent the model first, then wait for it to exist in the tree
--- GetObjects is sync but Parent assignment yields one frame before WaitForChild sees it
-local existingEid = events:FindFirstChild("Eid")
-if not existingEid then
+if not events:FindFirstChild("Eid") then
 	local model = game:GetObjects("rbxassetid://104189817203567")[1]
 	if model then
 		model.Name   = "Eid"
@@ -54,11 +54,7 @@ if not existingEid then
 	end
 end
 
--- Now safe — either we just parented it or it was already there
 local WANDER_PART = events:WaitForChild("Eid"):WaitForChild("Wander")
-
--- Gate: spoofer's fake entry must be queryable before any downstream logic runs
-repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
 
 local burstAsset = ReplicatedStorage.Controllers.EventController.Events.Eid.Burst
 
