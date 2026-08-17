@@ -3,7 +3,6 @@ if not game:IsLoaded() then game.Loaded:Wait() end
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 local TweenService      = game:GetService("TweenService")
-local RunService        = game:GetService("RunService")
 local Players           = game:GetService("Players")
 local PhysicsService    = game:GetService("PhysicsService")
 
@@ -26,19 +25,24 @@ local POST_IMPACT_WAIT    = 1
 local RETIRE_WAIT         = 2
 local WANDER_INTERVAL     = 3
 local WANDER_CHANCE       = 0.6
-
-local RAIN_AREA_CENTER = Vector3.new(0, 0, 0)
-local RAIN_AREA_SIZE   = Vector3.new(60, 0, 60)
+local RAIN_AREA_SIZE      = Vector3.new(60, 0, 60)
 
 local rng = Random.new()
 
 -- ─── Wait for spoofer ─────────────────────────────────────────────────────────
 
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
-
+print("dork")
 local eventTrove   = Trove.new()
 local spawnedBalls = {}
 local isActive     = true
+
+-- ─── Ball folder ──────────────────────────────────────────────────────────────
+
+local ballFolder = Instance.new("Folder")
+ballFolder.Name   = "SoccerEventBalls"
+ballFolder.Parent = workspace
+eventTrove:Add(ballFolder)
 
 -- ─── Physics groups ───────────────────────────────────────────────────────────
 
@@ -66,8 +70,8 @@ local function stickToGround(position: Vector3): Vector3
 end
 
 local function getRandomFieldPos(): Vector3
-    local board = workspace:FindFirstChild("SoccerScoreBoard")
-    local center = board and board:GetPivot().Position or RAIN_AREA_CENTER
+    local board  = workspace:FindFirstChild("SoccerScoreBoard")
+    local center = board and board:GetPivot().Position or Vector3.new(0, 0, 0)
     local offset = Vector3.new(
         (math.random() - 0.5) * RAIN_AREA_SIZE.X,
         0,
@@ -109,38 +113,43 @@ local function removeFromList(ball)
     end
 end
 
--- ─── Ball model ───────────────────────────────────────────────────────────────
+-- ─── Ball part builder ────────────────────────────────────────────────────────
 
-local function createBall(position: Vector3): Model
-    local model = Instance.new("Model")
-    model.Name  = "SoccerEventBall"
-    model:SetAttribute("Moving",   false)
-    model:SetAttribute("Striking", false)
+local function makeBallPart(position: Vector3): BasePart
+    -- try to clone the real SoccerBall part from the game's LocalScript
+    local template = ReplicatedStorage:FindFirstChild("SoccerBall", true)
 
-    local anchor = Instance.new("Part")
-    anchor.Name         = "AnchorPart"
-    anchor.Size         = Vector3.new(1, 1, 1)
-    anchor.Transparency = 1
-    anchor.CanCollide   = false
-    anchor.Anchored     = true
-    anchor.CFrame       = CFrame.new(position)
-    anchor.Parent       = model
+    local part: BasePart
+    if template and template:IsA("BasePart") then
+        part = template:Clone()
+    else
+        -- fallback: plain sphere so it's always visible
+        part = Instance.new("Part")
+        part.Shape = Enum.PartType.Ball
+        part.Size  = Vector3.new(2.5, 2.5, 2.5)
+        part.Color = Color3.fromRGB(255, 255, 255)
+        part.Material = Enum.Material.SmoothPlastic
+    end
 
-    model.PrimaryPart = anchor
-    model.Parent      = workspace
-    return model
+    part.Anchored       = true   -- we move it manually like Easter
+    part.CanCollide     = false
+    part.CastShadow     = true
+    part.CollisionGroup = "SoccerBall"
+    part.CFrame         = CFrame.new(position)
+    part.Parent         = ballFolder
+    return part
 end
 
--- ─── Behavior ─────────────────────────────────────────────────────────────────
+-- ─── Spawn ────────────────────────────────────────────────────────────────────
 
 local spawnBall
 
 local function wander(ball)
-    if not ball.Model or not ball.Model.Parent then return end
+    if not ball.Part or not ball.Part.Parent then return end
     if ball.IsBusy then return end
 
     local targetPos = getRandomFieldPos()
-    local startPos  = ball.Model:GetPivot().Position
+    local startPos  = ball.Part.CFrame.Position
     local diff      = targetPos - startPos
     local distance  = diff.Magnitude
     if distance < 1 then return end
@@ -151,34 +160,31 @@ local function wander(ball)
     ball.wanderGen = (ball.wanderGen or 0) + 1
     local myGen = ball.wanderGen
 
-    ball.Model:SetAttribute("Moving", true)
-
     ball.Trove:Add(task.spawn(function()
         local elapsed = 0
         while elapsed < duration
             and not ball.IsBusy
             and isActive
-            and ball.Model
-            and ball.Model.Parent
+            and ball.Part
+            and ball.Part.Parent
         do
             local dt = task.wait()
             elapsed += dt
             local alpha = math.clamp(elapsed / duration, 0, 1)
             local pos   = stickToGround(startPos:Lerp(targetPos, alpha))
-            ball.Model:PivotTo(CFrame.new(pos, pos + direction))
+            ball.Part.CFrame = CFrame.new(pos, pos + direction)
         end
-        if ball.Model and ball.Model.Parent
+        if ball.Part and ball.Part.Parent
             and ball.wanderGen == myGen
             and not ball.IsBusy
         then
-            ball.Model:SetAttribute("Moving", false)
+            -- idle
         end
     end))
 end
 
 local function retireAndRespawn(ball)
     removeFromList(ball)
-
     ball.Trove:Add(task.delay(RETIRE_WAIT, function()
         eventTrove:Remove(ball.Trove)
         if not isActive then return end
@@ -187,26 +193,23 @@ local function retireAndRespawn(ball)
 end
 
 local function strikeAnimal(ball, targetAnimal: Model)
-    if not ball.Model or not ball.Model.Parent then return end
+    if not ball.Part or not ball.Part.Parent then return end
     if ball.IsBusy then return end
 
     ball.IsBusy    = true
     ball.wanderGen = (ball.wanderGen or 0) + 1
-    ball.Model:SetAttribute("Moving", false)
 
     ball.Trove:Add(task.spawn(function()
         local chaseStart = os.clock()
         local reached    = false
 
-        ball.Model:SetAttribute("Moving", true)
-
         while isActive
-            and ball.Model and ball.Model.Parent
+            and ball.Part and ball.Part.Parent
             and targetAnimal and targetAnimal.Parent and targetAnimal.PrimaryPart
         do
             if os.clock() - chaseStart > CHASE_TIMEOUT then break end
 
-            local myPos  = ball.Model:GetPivot().Position
+            local myPos  = ball.Part.CFrame.Position
             local tgtPos = targetAnimal.PrimaryPart.Position
             local dist   = (tgtPos - myPos).Magnitude
 
@@ -218,49 +221,61 @@ local function strikeAnimal(ball, targetAnimal: Model)
             local dt     = task.wait()
             local dir    = (tgtPos - myPos).Unit
             local newPos = stickToGround(myPos + dir * math.min(BALL_SPEED * dt, dist))
-            ball.Model:PivotTo(CFrame.new(newPos, newPos + dir))
+            ball.Part.CFrame = CFrame.new(newPos, newPos + dir)
         end
-
-        ball.Model:SetAttribute("Moving", false)
 
         if not reached or not (targetAnimal and targetAnimal.Parent) then
             ball.IsBusy = false
             return
         end
 
-        ball.Model:SetAttribute("StrikeTarget", targetAnimal.Name)
-        ball.Model:SetAttribute("Striking",     true)
+        -- bounce animation on impact
+        local impactStart = os.clock()
+        ball.Trove:Add(task.spawn(function()
+            while os.clock() - impactStart < IMPACT_DURATION and ball.Part and ball.Part.Parent do
+                local t       = (os.clock() - impactStart) / IMPACT_DURATION
+                local bounce  = math.abs(math.sin(t * math.pi * 3)) * 2
+                local basePos = ball.Part.CFrame.Position
+                ball.Part.CFrame = CFrame.new(basePos.X, basePos.Y + bounce * task.wait(), basePos.Z)
+            end
+        end))
+
         task.wait(IMPACT_DURATION)
-
         giveTrait(targetAnimal)
-
-        if ball.Model and ball.Model.Parent then
-            ball.Model:SetAttribute("Striking",     false)
-            ball.Model:SetAttribute("StrikeTarget", nil)
-        end
 
         ball.IsBusy = false
         task.wait(POST_IMPACT_WAIT)
 
-        if ball.Model and ball.Model.Parent then
+        -- fade out before respawn
+        local fadeTween = TweenService:Create(
+            ball.Part,
+            TweenInfo.new(0.4),
+            { Transparency = 1 }
+        )
+        fadeTween:Play()
+        fadeTween.Completed:Wait()
+
+        if ball.Part and ball.Part.Parent then
             retireAndRespawn(ball)
         end
     end))
 end
 
--- ─── Spawn ────────────────────────────────────────────────────────────────────
-
 spawnBall = function()
     if not isActive then return end
 
-    local pos   = getRandomFieldPos()
-    local model = createBall(pos)
+    local pos  = getRandomFieldPos()
+    local part = makeBallPart(pos)
+
+    -- pop in with a tween
+    part.Transparency = 1
+    TweenService:Create(part, TweenInfo.new(0.3), { Transparency = 0 }):Play()
 
     local ballTrove = eventTrove:Extend()
-    ballTrove:Add(model)
+    ballTrove:Add(part)
 
     local ball = {
-        Model     = model,
+        Part      = part,
         IsBusy    = false,
         wanderGen = 0,
         Trove     = ballTrove,
@@ -282,9 +297,8 @@ local function main()
         while isActive do
             task.wait(WANDER_INTERVAL)
             for _, ball in ipairs(spawnedBalls) do
-                if ball.Model and ball.Model.Parent
+                if ball.Part and ball.Part.Parent
                     and not ball.IsBusy
-                    and not ball.Model:GetAttribute("Moving")
                     and math.random() < WANDER_CHANCE
                 then
                     wander(ball)
@@ -309,7 +323,7 @@ local function main()
 
             local free = {}
             for _, ball in ipairs(spawnedBalls) do
-                if not ball.IsBusy and ball.Model and ball.Model.Parent then
+                if not ball.IsBusy and ball.Part and ball.Part.Parent then
                     table.insert(free, ball)
                 end
             end
@@ -322,7 +336,6 @@ local function main()
         end
     end))
 
-    -- shutdown — identical to Easter
     while EventController:GetActiveEventData(EVENT_NAME) do task.wait() end
 
     isActive = false
