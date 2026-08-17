@@ -3,11 +3,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 local HttpService       = game:GetService("HttpService")
 local RunService        = game:GetService("RunService")
-print("aquinas")
-local Trove             = require(ReplicatedStorage.Packages.Trove)
-local EventController   = require(ReplicatedStorage.Controllers.EventController)
-local SoundController   = require(ReplicatedStorage.Controllers.SoundController)
-local ClientEventUtils  = require(ReplicatedStorage.Controllers.EventController.ClientEventUtils)
+
+local Trove            = require(ReplicatedStorage.Packages.Trove)
+local EventController  = require(ReplicatedStorage.Controllers.EventController)
+local ClientEventUtils = require(ReplicatedStorage.Controllers.EventController.ClientEventUtils)
 
 local EVENT_NAME             = "Eid"
 local TAG_NAME               = "EidBalloon"
@@ -28,9 +27,18 @@ local BALLOON_WEIGHTS = {
 	["Rainbow"] = 15,
 }
 
-local events = workspace:FindFirstChild("Events") 
-events.Name   = "Events"
-events.Parent = workspace
+local BALLOON_TRAITS = {
+	["Red"]     = "Red Balloon",
+	["Orange"]  = "Orange Balloon",
+	["Green"]   = "Green Balloon",
+	["Blue"]    = "Blue Balloon",
+	["Pink"]    = "Pink Balloon",
+	["Rainbow"] = "Rainbow Balloon",
+}
+
+-- ─── Setup ────────────────────────────────────────────────────────────────────
+
+local events = workspace:WaitForChild("Events")
 
 local model = game:GetObjects("rbxassetid://104189817203567")[1]
 if model then
@@ -38,7 +46,7 @@ if model then
 	model.Parent = events
 end
 
-local WANDER_PART = workspace:WaitForChild("Events"):WaitForChild("Eid"):WaitForChild("Wander")
+local WANDER_PART = events:WaitForChild("Eid"):WaitForChild("Wander")
 
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
 
@@ -50,6 +58,8 @@ local balloons         = {}
 local balloonTasks     = {}
 local recentlyTargeted = {}
 local activeAttacks    = 0
+
+-- ─── Helpers ──────────────────────────────────────────────────────────────────
 
 local function getRandomWanderPosition(currentPosition: Vector3?): Vector3
 	local halfY = WANDER_PART.Size.Y / 2
@@ -90,6 +100,8 @@ local function pickWeightedBalloonType(): string
 	return "Red"
 end
 
+-- ─── Hitbox ───────────────────────────────────────────────────────────────────
+
 local function createBalloonHitbox(balloonType: string): Part
 	local hitbox        = Instance.new("Part")
 	hitbox.Name         = HttpService:GenerateGUID(false)
@@ -104,6 +116,8 @@ local function createBalloonHitbox(balloonType: string): Part
 	hitbox.Parent = workspace
 	return hitbox
 end
+
+-- ─── Float ────────────────────────────────────────────────────────────────────
 
 local function floatBalloon(balloon: Part)
 	local timeOffset  = math.random() * math.pi * 2
@@ -134,6 +148,8 @@ local function floatBalloon(balloon: Part)
 
 	eventTrove:Add(conn)
 end
+
+-- ─── Attack ───────────────────────────────────────────────────────────────────
 
 local spawnBalloon
 
@@ -234,6 +250,8 @@ local function attackAnimal(balloon: Part)
 	end
 end
 
+-- ─── Spawn ────────────────────────────────────────────────────────────────────
+
 spawnBalloon = function(balloonType: string)
 	if not isActive then return end
 	local balloon = createBalloonHitbox(balloonType)
@@ -244,6 +262,8 @@ spawnBalloon = function(balloonType: string)
 	eventTrove:Add(balloon)
 	floatBalloon(balloon)
 end
+
+-- ─── Main ─────────────────────────────────────────────────────────────────────
 
 local function main()
 	for _ = 1, BALLOON_COUNT do
