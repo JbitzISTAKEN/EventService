@@ -5,9 +5,9 @@ local CollectionService = game:GetService("CollectionService")
 local RunService        = game:GetService("RunService")
 local Debris            = game:GetService("Debris")
 
-local Trove           = require(ReplicatedStorage.Packages.Trove)
-local Observers       = require(ReplicatedStorage.Packages.Observers)
-local EventController = require(ReplicatedStorage.Controllers.EventController)
+local Trove            = require(ReplicatedStorage.Packages.Trove)
+local Observers        = require(ReplicatedStorage.Packages.Observers)
+local EventController  = require(ReplicatedStorage.Controllers.EventController)
 local ClientEventUtils = require(ReplicatedStorage.Controllers.EventController.ClientEventUtils)
 
 local EVENT_NAME = "Meowl"
@@ -111,14 +111,12 @@ for _, part in ipairs(meowlsFolder:GetChildren()) do
         part:SetAttribute("Flying", false)
         part:SetAttribute("Attack", false)
         originalPositions[part] = part.CFrame
-       CollectionService:AddTag(part, "MeowlEventMeowl")
+        -- tag is already applied server-side; adding it again fires observeTag twice
         table.insert(spawnedMeowls, part)
     end
 end
 
--- ─── Burst — 1:1 with controller OnLoad ──────────────────────────────────────
--- Server fires animal.Name (string), we find the animal and call playBurst
--- exactly as the controller does: playBurst(script.Burst, part, sounds)
+-- ─── Burst ────────────────────────────────────────────────────────────────────
 
 local function onBurst(animalName: string)
     local animals = CollectionService:GetTagged("Animal")
