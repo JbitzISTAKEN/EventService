@@ -807,7 +807,6 @@ local function main()
     NotificationController:Notify(
         "<font color='#ff4545'>Brainrot Express</font> arrives in 10 seconds!",
         10,
-        ReplicatedStorage.Sounds.Sfx.Bell
     )
     task.wait(10)
     if not isActive then return end
