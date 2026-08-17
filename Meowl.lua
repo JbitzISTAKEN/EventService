@@ -35,6 +35,7 @@ local originalPositions = {}
 local recentlyTargeted  = {}
 local isActive          = true
 
+print("heyhey") 
 -- ─── Load meowls folder from asset ───────────────────────────────────────────
 local objects = game:GetObjects("rbxassetid://139716127145162")
 for _, obj in objects do
