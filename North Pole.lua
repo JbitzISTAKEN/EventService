@@ -1,7 +1,6 @@
 if not game:IsLoaded() then game.Loaded:Wait() end
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local CollectionService = game:GetService("CollectionService")
 local HttpService       = game:GetService("HttpService")
 local RunService        = game:GetService("RunService")
 local TweenService      = game:GetService("TweenService")
@@ -19,7 +18,6 @@ local CUTSCENE_DURATION    = 5
 local BOARDING_WINDOW      = 10
 local MAX_GIFTS            = 10
 local CONVEYOR_SPEED       = 10
-local CONVEYOR_BR_SIZE     = 6
 local ELF_WALK_SPEED       = 10
 local ELF_ATTACK_INTERVAL  = 30
 local ELF_ATTACK_RANGE     = 14
@@ -34,6 +32,7 @@ local SANTA_ARRIVE_TIME    = 10
 local SNOW_DROP_INTERVAL   = 5
 local SNOW_PRESENT_FALL    = 5
 local SNOW_PRESENT_LIFETIME = 180
+local SNOW_MAX_PRESENTS    = 25
 local BRAINROT_LIST = {
     "Cocoa Assassino",
     "Ballerina Peppermintina",
@@ -55,15 +54,26 @@ local snowSanta      = nil
 local snowGifts      = {}
 local snowGeneration = 0
 local grabbableItems = {}
-local boardedPlayers = {}
+
+-- ─── Countdown notification ───────────────────────────────────────────────────
+
+local function notifyCountdown(template, seconds)
+    -- fires a fresh notification every second so the number visibly ticks down
+    task.spawn(function()
+        for i = seconds, 1, -1 do
+            NotificationController:Notify(template:format(i), 1.1)
+            task.wait(1)
+        end
+    end)
+end
 
 -- ─── Asset loading ────────────────────────────────────────────────────────────
 
 local function loadMap()
     local obj = game:GetObjects("rbxassetid://113790446555299")[1]
     if obj then
-        obj.Name   = "MainNorthPoleMap"
-        obj.Parent = workspace
+        obj.Name     = "MainNorthPoleMap"
+        obj.Parent   = workspace
         northPoleMap = obj
     end
 end
@@ -71,8 +81,8 @@ end
 local function loadTrain()
     local obj = game:GetObjects("rbxassetid://85773105247523")[1]
     if obj then
-        obj.Name   = "BrainrotExpress"
-        obj.Parent = workspace
+        obj.Name    = "BrainrotExpress"
+        obj.Parent  = workspace
         activeTrain = obj
     end
 end
@@ -88,8 +98,7 @@ local function snapToPoleGround(position)
         poleGroundParams.IgnoreWater = true
         poleGroundParams.FilterDescendantsInstances = { northPoleMap }
     end
-    local origin = position + Vector3.new(0, 20, 0)
-    local result = workspace:Raycast(origin, Vector3.new(0, -200, 0), poleGroundParams)
+    local result = workspace:Raycast(position + Vector3.new(0, 20, 0), Vector3.new(0, -200, 0), poleGroundParams)
     local y = result and result.Position.Y or position.Y
     return CFrame.new(position.X, y + 4, position.Z)
 end
@@ -163,9 +172,9 @@ end
 
 local function updateBillboard()
     if not northPoleMap then return end
-    local overhead   = northPoleMap:FindFirstChild("Overhead")
-    local billboard  = overhead and overhead:FindFirstChild("BillboardGui")
-    local giftsText  = billboard and billboard:FindFirstChild("Gifts")
+    local overhead  = northPoleMap:FindFirstChild("Overhead")
+    local billboard = overhead and overhead:FindFirstChild("BillboardGui")
+    local giftsText = billboard and billboard:FindFirstChild("Gifts")
     if giftsText and giftsText:IsA("TextLabel") then
         giftsText.Text = string.format("%d/%d", deliveredGifts, MAX_GIFTS)
     end
@@ -183,21 +192,50 @@ local function revealGift(number)
     end
 end
 
+-- ─── Train movement ───────────────────────────────────────────────────────────
+-- Drives PivotTo every Heartbeat for the full tween duration.
+-- Returns when the model reaches the target or is destroyed.
+
+local function driveModelTo(model, fromCF, toCF, speed)
+    if not model or not model.Parent then return end
+    local distance = (toCF.Position - fromCF.Position).Magnitude
+    if distance < 0.01 then return end
+    local duration = distance / speed
+    local t0       = os.clock()
+    while model and model.Parent do
+        local alpha = math.clamp((os.clock() - t0) / duration, 0, 1)
+        local cf    = fromCF:Lerp(toCF, alpha)
+        model:PivotTo(cf)
+        if alpha >= 1 then break end
+        RunService.Heartbeat:Wait()
+    end
+end
+
 -- ─── Gift delivery ────────────────────────────────────────────────────────────
 
 local function handleDelivery()
     if not isActive or sleighFull then return end
     if not LocalPlayer:GetAttribute("Stealing") then return end
+    LocalPlayer:SetAttribute("Stealing", nil)
     deliveredGifts += 1
     revealGift(deliveredGifts)
     updateBillboard()
+    NotificationController:Notify(
+        string.format("<font color='#FFD700'>Gift delivered!</font> %d/%d", deliveredGifts, MAX_GIFTS),
+        3
+    )
     if deliveredGifts >= MAX_GIFTS then
         sleighFull = true
         NotificationController:Notify(
-            "<font color='#FFD700'>Santa's Sleigh</font> is full! Departing soon.",
-            8,
-            ReplicatedStorage.Sounds.Sfx.Success
+            "<font color='#FFD700'>Santa's Sleigh</font> is full! Departing in 10 seconds.",
+            10
         )
+        task.delay(10, function()
+            if isActive and sleighFull then
+                isActive = false
+                eventTrove:Destroy()
+            end
+        end)
     end
 end
 
@@ -218,8 +256,11 @@ local function watchDeliveryHitbox()
         if not LocalPlayer:GetAttribute("Stealing") then return end
         local character = LocalPlayer.Character
         if not character then return end
-        local pos = character:GetPivot().Position
-        if #workspace:GetPartBoundsInBox(CFrame.new(pos), Vector3.new(4, 4, 2), deliveryOverlapParams) > 0 then
+        if #workspace:GetPartBoundsInBox(
+            CFrame.new(character:GetPivot().Position),
+            Vector3.new(4, 4, 2),
+            deliveryOverlapParams
+        ) > 0 then
             handleDelivery()
         end
     end))
@@ -229,23 +270,30 @@ end
 
 local function setupGrabPrompt(mainModel)
     local prompt = Instance.new("ProximityPrompt")
-    prompt.Name               = "ProximityPrompt"
-    prompt.ActionText         = "Grab"
-    prompt.HoldDuration       = 0.5
+    prompt.Name                = "ProximityPrompt"
+    prompt.ActionText          = "Grab"
+    prompt.HoldDuration        = 0.5
     prompt.RequiresLineOfSight = false
-    prompt.Enabled            = true
-    prompt.Parent             = mainModel
+    prompt.Enabled             = true
+    prompt.Parent              = mainModel
 
     prompt.Triggered:Connect(function()
+        if LocalPlayer:GetAttribute("Stealing") then
+            NotificationController:Notify("You're already carrying something!", 3)
+            return
+        end
         local character = LocalPlayer.Character
         local hrp       = character and character:FindFirstChild("HumanoidRootPart")
         if not hrp then return end
         if (hrp.Position - mainModel.Position).Magnitude > 18 then return end
-        if grabbableItems[mainModel.Name] then
-            grabbableItems[mainModel.Name] = nil
-            LocalPlayer:SetAttribute("Stealing", true)
-            mainModel:Destroy()
-        end
+        if not grabbableItems[mainModel.Name] then return end
+        grabbableItems[mainModel.Name] = nil
+        LocalPlayer:SetAttribute("Stealing", true)
+        mainModel:Destroy()
+        NotificationController:Notify(
+            "Deliver the <font color='#FFD700'>gift</font> to Santa's Sleigh!",
+            5
+        )
     end)
 end
 
@@ -266,7 +314,7 @@ local function startPathLoop()
         while isActive and northPoleMap and northPoleMap.Parent do
             local brainrot = BRAINROT_LIST[math.random(#BRAINROT_LIST)]
 
-            local mainModel = Instance.new("Part")
+            local mainModel       = Instance.new("Part")
             mainModel.Name        = HttpService:GenerateGUID(false)
             mainModel.Size        = Vector3.new(1, 1, 1)
             mainModel.Transparency = 1
@@ -283,18 +331,11 @@ local function startPathLoop()
                 local gift = nil
                 for i = 2, #pathPoints do
                     if not isActive or not mainModel.Parent then break end
-                    local targetCF = pathPoints[i].CFrame
-                    local distance = (targetCF.Position - mainModel.Position).Magnitude
-                    local duration = distance / CONVEYOR_SPEED
-                    local tween    = TweenService:Create(
-                        mainModel,
-                        TweenInfo.new(duration, Enum.EasingStyle.Linear),
-                        { CFrame = targetCF }
-                    )
-                    tween:Play()
-                    tween.Completed:Wait()
+                    local fromCF = mainModel:GetPivot()
+                    local toCF   = pathPoints[i].CFrame
+                    driveModelTo(mainModel, fromCF, toCF, CONVEYOR_SPEED)
 
-                    if i == 2 and not gift then
+                    if i == 2 and not gift and mainModel.Parent then
                         gift = ReplicatedStorage.Models.Events["North Pole"].Gift:Clone()
                         gift.Name = "Gift"
                         gift:PivotTo(mainModel.CFrame)
@@ -302,7 +343,7 @@ local function startPathLoop()
                         local giftRoot = gift:FindFirstChild("RootPart")
                         if giftRoot and giftRoot:IsA("BasePart") then
                             giftRoot.Anchored = false
-                            local weld = Instance.new("Weld")
+                            local weld  = Instance.new("Weld")
                             weld.Part0  = giftRoot
                             weld.Part1  = mainModel
                             weld.C0     = CFrame.new()
@@ -332,8 +373,11 @@ local function elfGroundY(x, z, fromY)
         elfGroundParams.IgnoreWater = true
         elfGroundParams.FilterDescendantsInstances = { northPoleMap }
     end
-    local origin = Vector3.new(x, fromY + 20, z)
-    local result = workspace:Raycast(origin, Vector3.new(0, -200, 0), elfGroundParams)
+    local result = workspace:Raycast(
+        Vector3.new(x, fromY + 20, z),
+        Vector3.new(0, -200, 0),
+        elfGroundParams
+    )
     return result and result.Position.Y or nil
 end
 
@@ -365,8 +409,7 @@ local function elfWalkTo(elf, targetPos, maxTime, shouldStop)
         if flatVec.Magnitude <= 2 then break end
         local dt      = RunService.Heartbeat:Wait()
         local moveAmt = math.min(ELF_WALK_SPEED * dt, flatVec.Magnitude)
-        local flatDir = flatVec.Unit
-        stepElf(elf, current + flatDir * moveAmt, flatDir, dt, elf.yStand)
+        stepElf(elf, current + flatVec.Unit * moveAmt, flatVec.Unit, dt, elf.yStand)
     end
     return true
 end
@@ -421,9 +464,8 @@ local function chaseAndStrike(elf, character)
             break
         end
         local dt      = RunService.Heartbeat:Wait()
-        local dir     = flat.Unit
         local moveAmt = math.min(ELF_WALK_SPEED * dt, flat.Magnitude)
-        stepElf(elf, current + dir * moveAmt, dir, dt, elf.yStand)
+        stepElf(elf, current + flat.Unit * moveAmt, flat.Unit, dt, elf.yStand)
     end
     elf.model:SetAttribute("IsRunning", false)
     if reached and character and character.Parent and isActive and elf.model.Parent then
@@ -434,17 +476,22 @@ local function chaseAndStrike(elf, character)
         end
         elf.model:SetAttribute("AttackAnimation", (elf.model:GetAttribute("AttackAnimation") or 0) + 1)
         task.wait(0.35)
-        NotificationController:Notify(
-            "An <font color='#ff4545'>Elf</font> knocked you down!",
-            4,
-            ReplicatedStorage.Sounds.Sfx.Damage
-        )
+        -- stun without ragdoll: freeze briefly then release
         local humanoid = character:FindFirstChildOfClass("Humanoid")
-        if humanoid then
-            humanoid:ChangeState(Enum.HumanoidStateType.Physics)
-            task.delay(ELF_RAGDOLL_DURATION, function()
+        local hrp      = character:FindFirstChild("HumanoidRootPart")
+        if humanoid and hrp then
+            hrp.Anchored = true
+            humanoid.WalkSpeed = 0
+            humanoid.JumpPower = 0
+            NotificationController:Notify(
+                "An <font color='#ff4545'>Elf</font> hit you!",
+                3
+            )
+            task.delay(ELF_CHASE_TIME * 0.3, function()
+                if hrp and hrp.Parent then hrp.Anchored = false end
                 if humanoid and humanoid.Parent then
-                    humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+                    humanoid.WalkSpeed = 16
+                    humanoid.JumpPower = 50
                 end
             end)
         end
@@ -457,9 +504,9 @@ local function runHouseElf()
     local spawnPart = house:FindFirstChild("ElfSpawn", true)
     local door      = house:FindFirstChild("Door")
     if not spawnPart or not door then return end
-    local spawnPos   = spawnPart.Position
-    local doorPos    = door:GetPivot().Position
-    local flatOut    = Vector3.new(doorPos.X - spawnPos.X, 0, doorPos.Z - spawnPos.Z)
+    local spawnPos  = spawnPart.Position
+    local doorPos   = door:GetPivot().Position
+    local flatOut   = Vector3.new(doorPos.X - spawnPos.X, 0, doorPos.Z - spawnPos.Z)
     if flatOut.Magnitude < 0.1 then
         local look = door:GetPivot().LookVector
         flatOut = Vector3.new(look.X, 0, look.Z)
@@ -474,7 +521,6 @@ local function runHouseElf()
 
     door:SetAttribute("Open", true)
     task.wait(ELF_DOOR_ANIM)
-
     if isActive and elf.model.Parent then
         elf.model:SetAttribute("IsRunning", true)
         elfWalkTo(elf, outsidePos, 8)
@@ -491,9 +537,7 @@ local function runHouseElf()
         elfWalkTo(elf, outsidePos, 12)
         door:SetAttribute("Open", true)
         task.wait(ELF_DOOR_ANIM)
-        if isActive and elf.model.Parent then
-            elfWalkTo(elf, spawnPos, 8)
-        end
+        if isActive and elf.model.Parent then elfWalkTo(elf, spawnPos, 8) end
         elf.model:SetAttribute("IsRunning", false)
     end
 
@@ -503,7 +547,7 @@ local function runHouseElf()
 end
 
 local function startElves()
-    activeElf     = nil
+    activeElf       = nil
     elfGroundParams = nil
     eventTrove:Add(task.spawn(function()
         while isActive and northPoleMap and northPoleMap.Parent do
@@ -527,7 +571,7 @@ end
 -- ─── Snow sleigh ──────────────────────────────────────────────────────────────
 
 local function clearSnowGifts()
-    for giftId, data in pairs(snowGifts) do
+    for _, data in pairs(snowGifts) do
         if data.model and data.model.Parent then data.model:Destroy() end
     end
     table.clear(snowGifts)
@@ -547,14 +591,14 @@ local function dropSnowGift(myGen, fromPos, brainrot)
     if giftRoot then
         giftRoot.Anchored = true
         giftRoot.CFrame   = CFrame.new(fromPos)
-
-        local tween = TweenService:Create(
-            giftRoot,
-            TweenInfo.new(SNOW_PRESENT_FALL, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
-            { CFrame = CFrame.new(landPos) }
-        )
-        tween:Play()
-        tween.Completed:Connect(function()
+        -- drive the fall manually so it actually moves
+        task.spawn(function()
+            driveModelTo(
+                giftRoot,
+                CFrame.new(fromPos),
+                CFrame.new(landPos),
+                (fromPos - landPos).Magnitude / SNOW_PRESENT_FALL
+            )
             if not snowGifts[giftId] then return end
             local prompt = Instance.new("ProximityPrompt")
             prompt.ActionText          = "Open"
@@ -566,9 +610,9 @@ local function dropSnowGift(myGen, fromPos, brainrot)
                 snowGifts[giftId] = nil
                 giftModel:Destroy()
                 NotificationController:Notify(
-                    "You opened a <font color='#FFD700'>Snow Gift</font>! You received a <font color='#ff69af'>" .. brainrot .. "</font>!",
-                    6,
-                    ReplicatedStorage.Sounds.Sfx.Success
+                    "You opened a <font color='#FFD700'>Snow Gift</font>! You received a <font color='#ff69af'>"
+                    .. brainrot .. "</font>!",
+                    6
                 )
             end)
         end)
@@ -597,25 +641,23 @@ local function startSnowSleigh(count)
     clearSnowGifts()
 
     local giftQueue = table.create(count)
-    for i = 1, count do
-        giftQueue[i] = BRAINROT_LIST[math.random(#BRAINROT_LIST)]
-    end
+    for i = 1, count do giftQueue[i] = BRAINROT_LIST[math.random(#BRAINROT_LIST)] end
 
     local santa = Instance.new("Part")
-    santa.Name        = "SnowSanta"
-    santa.Size        = Vector3.new(6, 3, 12)
+    santa.Name         = "SnowSanta"
+    santa.Size         = Vector3.new(6, 3, 12)
     santa.Transparency = 1
-    santa.Anchored    = true
-    santa.CanCollide  = false
-    santa.CanQuery    = false
-    santa.CanTouch    = false
-    santa.CFrame      = CFrame.new(randomPointInPart(wanderParts[math.random(#wanderParts)], SANTA_HEIGHT))
-    santa.Parent      = workspace
+    santa.Anchored     = true
+    santa.CanCollide   = false
+    santa.CanQuery     = false
+    santa.CanTouch     = false
+    santa.CFrame       = CFrame.new(randomPointInPart(wanderParts[math.random(#wanderParts)], SANTA_HEIGHT))
+    santa.Parent       = workspace
     santa:AddTag("NorthPoleSantaSleign")
     snowSanta = santa
 
     local delivering = true
-    eventTrove:Add(task.spawn(function()
+    task.spawn(function()
         while delivering and myGen == snowGeneration and santa.Parent do
             local dest = randomPointInPart(wanderParts[math.random(#wanderParts)], SANTA_HEIGHT)
             local from = santa.Position
@@ -627,23 +669,16 @@ local function startSnowSleigh(count)
                 local bob = math.sin(os.clock() * 2) * SANTA_BOB
                 local flat = Vector3.new(dest.X - from.X, 0, dest.Z - from.Z)
                 if flat.Magnitude < 1e-3 then flat = santa.CFrame.LookVector end
-                santa.CFrame = CFrame.lookAt(
-                    pos + Vector3.new(0, bob, 0),
-                    pos + Vector3.new(0, bob, 0) + flat.Unit
-                )
+                santa.CFrame = CFrame.lookAt(pos + Vector3.new(0, bob, 0), pos + Vector3.new(0, bob, 0) + flat.Unit)
                 if a >= 1 then break end
                 RunService.Heartbeat:Wait()
             end
             task.wait(math.random(1, 2))
         end
-    end))
+    end)
 
-    eventTrove:Add(task.spawn(function()
-        NotificationController:Notify(
-            "<font color='#ff4545'>Santa</font> arrives in " .. SANTA_ARRIVE_TIME .. " seconds!",
-            SANTA_ARRIVE_TIME,
-            ReplicatedStorage.Sounds.Sfx.Bell
-        )
+    task.spawn(function()
+        notifyCountdown("<font color='#ff4545'>Santa</font> arrives in %d seconds!", SANTA_ARRIVE_TIME)
         task.wait(SANTA_ARRIVE_TIME)
         if myGen ~= snowGeneration or not santa.Parent then return end
 
@@ -669,36 +704,17 @@ local function startSnowSleigh(count)
 
         if snowSanta == santa then snowSanta = nil end
         if santa and santa.Parent then santa:Destroy() end
-    end))
+    end)
 end
 
 -- ─── Train cutscene ───────────────────────────────────────────────────────────
-
-local function tweenModelAlongPath(model, fromCF, toCF, speed)
-    local distance = (toCF.Position - fromCF.Position).Magnitude
-    local duration = distance / speed
-    local cfValue  = Instance.new("CFrameValue")
-    cfValue.Value  = fromCF
-    local tween = TweenService:Create(
-        cfValue,
-        TweenInfo.new(duration, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
-        { Value = toCF }
-    )
-    local conn = RunService.Heartbeat:Connect(function()
-        if model and model.Parent then model:PivotTo(cfValue.Value) end
-    end)
-    tween:Play()
-    tween.Completed:Wait()
-    conn:Disconnect()
-    cfValue:Destroy()
-end
 
 local function startTrainCutscene()
     loadTrain()
     if not activeTrain then return end
 
-    local road           = workspace:FindFirstChild("Road")
-    local startGround    = road and road:FindFirstChild("StartGround")
+    local road            = workspace:FindFirstChild("Road")
+    local startGround     = road and road:FindFirstChild("StartGround")
     local mapCenterGround = workspace:FindFirstChild("MapCenterGround")
     if not startGround or not mapCenterGround then
         if activeTrain then activeTrain:Destroy() activeTrain = nil end
@@ -723,52 +739,51 @@ local function startTrainCutscene()
         end
     end
 
-    local startCF  = CFrame.lookAt(startGround.Position, mapCenterGround.Position)
-    local dir      = (mapCenterGround.Position - startGround.Position).Unit
-    local endCF    = CFrame.lookAt(mapCenterGround.Position, mapCenterGround.Position + dir)
+    local startCF = CFrame.lookAt(startGround.Position, mapCenterGround.Position)
+    local dir     = (mapCenterGround.Position - startGround.Position).Unit
+    local endCF   = CFrame.lookAt(mapCenterGround.Position, mapCenterGround.Position + dir)
     activeTrain:PivotTo(startCF)
 
-    tweenModelAlongPath(activeTrain, startCF, endCF, TRAIN_SPEED)
+    -- arrival drive — Heartbeat-based, no CFrameValue race
+    driveModelTo(activeTrain, startCF, endCF, TRAIN_SPEED)
+    if not activeTrain or not activeTrain.Parent then return end
 
-    -- boarding window
-    for _, seat in activeTrain:GetDescendants() do
-        if seat:IsA("Seat") then
-            seat.Disabled     = false
-            seat.Transparency = 0.4
-            seat.CanCollide   = true
-            seat.CanTouch     = true
+    -- open seats for boarding
+    for _, part in activeTrain:GetDescendants() do
+        if part:IsA("Seat") then
+            part.Disabled     = false
+            part.Transparency = 0.4
+            part.CanCollide   = true
+            part.CanTouch     = true
         end
     end
 
-    NotificationController:Notify(
-        "<font color='#ff4545'>Brainrot Express</font> departs in " .. BOARDING_WINDOW .. " seconds — board now!",
-        BOARDING_WINDOW,
-        ReplicatedStorage.Sounds.Sfx.Bell
+    notifyCountdown(
+        "<font color='#ff4545'>Brainrot Express</font> departs in %d seconds — board now!",
+        BOARDING_WINDOW
     )
 
-    local boarded = false
+    local boarded   = false
     local boardConn = RunService.Heartbeat:Connect(function()
         local character = LocalPlayer.Character
         if not character then return end
-        local humanoid  = character:FindFirstChildOfClass("Humanoid")
-        if humanoid and humanoid.SeatPart then
-            boarded = true
-        end
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        if humanoid and humanoid.SeatPart then boarded = true end
     end)
-
     task.wait(BOARDING_WINDOW)
     boardConn:Disconnect()
 
-    for _, seat in activeTrain:GetDescendants() do
-        if seat:IsA("Seat") then seat.Transparency = 1 end
+    for _, part in activeTrain:GetDescendants() do
+        if part:IsA("Seat") then part.Transparency = 1 end
     end
 
+    -- departure drive
     local endTrack = road and road:FindFirstChild("EndTrain")
     if endTrack and activeTrain and activeTrain.Parent then
         local currentCF = activeTrain:GetPivot()
         local endDir    = (endTrack.Position - currentCF.Position).Unit
         local finalCF   = CFrame.lookAt(endTrack.Position, endTrack.Position + endDir)
-        tweenModelAlongPath(activeTrain, currentCF, finalCF, TRAIN_SPEED)
+        driveModelTo(activeTrain, currentCF, finalCF, TRAIN_SPEED)
     end
 
     task.wait(CUTSCENE_DURATION)
@@ -795,8 +810,7 @@ local function startTrainCutscene()
 
         NotificationController:Notify(
             "Welcome to the <font color='#ff4545'>North Pole</font>! Deliver gifts to Santa's Sleigh.",
-            8,
-            ReplicatedStorage.Sounds.Sfx.Success
+            8
         )
     end
 end
@@ -804,9 +818,9 @@ end
 -- ─── Main ─────────────────────────────────────────────────────────────────────
 
 local function main()
-    NotificationController:Notify(
-        "<font color='#ff4545'>Brainrot Express</font> arrives in 10 seconds!",
-        10,
+    notifyCountdown(
+        "<font color='#ff4545'>Brainrot Express</font> arrives in %d seconds!",
+        10
     )
     task.wait(10)
     if not isActive then return end
@@ -822,7 +836,6 @@ local function main()
     if activeTrain then activeTrain:Destroy() activeTrain = nil end
     if northPoleMap then northPoleMap:Destroy() northPoleMap = nil end
     table.clear(grabbableItems)
-    table.clear(boardedPlayers)
     eventTrove:Destroy()
 end
 
