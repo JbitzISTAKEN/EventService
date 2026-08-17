@@ -1,5 +1,4 @@
 local CollectionService  = game:GetService("CollectionService")
-local PathfindingService = game:GetService("PathfindingService")
 local RunService         = game:GetService("RunService")
 
 local NpcPathfinding = {}
@@ -29,7 +28,6 @@ local function smoothTurn(model: Model, newPos: Vector3, flatDir: Vector3, dt: n
 	if flatDir.Magnitude < 1e-4 then
 		local primaryPart = model.PrimaryPart
 		if not primaryPart then return end
-
 		local look = primaryPart.CFrame.LookVector
 		flatDir = Vector3.new(look.X, 0, look.Z)
 		if flatDir.Magnitude < 1e-4 then
@@ -39,7 +37,6 @@ local function smoothTurn(model: Model, newPos: Vector3, flatDir: Vector3, dt: n
 	flatDir = flatDir.Unit
 
 	if not isModelValid(model) then return end
-
 	local primaryPart = model.PrimaryPart
 	if not primaryPart then return end
 
@@ -47,7 +44,6 @@ local function smoothTurn(model: Model, newPos: Vector3, flatDir: Vector3, dt: n
 	if not currentCFrame then return end
 
 	local targetCF = CFrame.new(newPos, newPos + flatDir)
-
 	local currentRot = CFrame.new(newPos)
 		* CFrame.fromMatrix(
 			Vector3.zero,
@@ -62,7 +58,6 @@ local function smoothTurn(model: Model, newPos: Vector3, flatDir: Vector3, dt: n
 	local ok, err = pcall(function()
 		model:PivotTo(currentRot:Lerp(targetCF, alpha))
 	end)
-
 	if not ok then
 		warn("[NpcPathfinding] smoothTurn PivotTo failed:", err)
 	end
@@ -119,7 +114,7 @@ function NpcPathfinding.stickToGround(
 ): Vector3
 	if not position then return Vector3.new(0, 0, 0) end
 
-	local up  = castUp   or 10
+	local up   = castUp   or 10
 	local down = castDown or 50
 	local off  = yOffset  or 1.5
 
@@ -150,51 +145,16 @@ function NpcPathfinding.stickToGround(
 	return position
 end
 
-local DEFAULT_AGENT_PARAMS = {
-	AgentRadius     = 2,
-	AgentHeight     = 5,
-	AgentCanJump    = false,
-	AgentCanClimb   = false,
-	WaypointSpacing = 4,
-}
+-- ─── computePath: straight-line fallback (ComputeAsync blocked on client) ─────
 
 function NpcPathfinding.computePath(
 	startPos: Vector3,
 	endPos: Vector3,
-	agentParams: {[string]: any}?
+	_agentParams: {[string]: any}?
 ): { Vector3 }?
 	if not startPos then return nil end
 	if not endPos then return nil end
-
-	local path = PathfindingService:CreatePath(agentParams or DEFAULT_AGENT_PARAMS)
-	if not path then return nil end
-
-	local ok = pcall(function()
-		path:ComputeAsync(startPos, endPos)
-	end)
-
-	if not ok or path.Status ~= Enum.PathStatus.Success then
-		return nil
-	end
-
-	local waypoints = path:GetWaypoints()
-	if not waypoints or #waypoints == 0 then
-		return nil
-	end
-
-	local result = table.create(#waypoints)
-	for i = 2, #waypoints do
-		local wp = waypoints[i]
-		if wp and wp.Position then
-			table.insert(result, NpcPathfinding.stickToGround(wp.Position))
-		end
-	end
-
-	if #result == 0 then
-		table.insert(result, NpcPathfinding.stickToGround(endPos))
-	end
-
-	return result
+	return { NpcPathfinding.stickToGround(endPos) }
 end
 
 function NpcPathfinding.moveTo(
@@ -218,9 +178,7 @@ function NpcPathfinding.moveTo(
 	if not primaryPart then return false end
 
 	local waypoints = NpcPathfinding.computePath(primaryPart.Position, targetPos)
-	if not waypoints or #waypoints == 0 then
-		return false
-	end
+	if not waypoints or #waypoints == 0 then return false end
 
 	local startClock = os.clock()
 
@@ -235,8 +193,7 @@ function NpcPathfinding.moveTo(
 			local pPart = model.PrimaryPart
 			if not pPart then return false end
 
-			local current = pPart.Position
-			local toWp    = wp - current
+			local toWp    = wp - pPart.Position
 			local flatVec = Vector3.new(toWp.X, 0, toWp.Z)
 			local wpDist  = flatVec.Magnitude
 
@@ -244,7 +201,6 @@ function NpcPathfinding.moveTo(
 
 			local dt = RunService.Heartbeat:Wait()
 			if dt <= 0 then continue end
-
 			if not isModelValid(model) then return false end
 
 			local pPart2 = model.PrimaryPart
@@ -259,9 +215,7 @@ function NpcPathfinding.moveTo(
 
 			if onStep and isModelValid(model) then
 				local ok, err = pcall(onStep, model, newPos)
-				if not ok then
-					warn("[NpcPathfinding] onStep error:", err)
-				end
+				if not ok then warn("[NpcPathfinding] onStep error:", err) end
 			end
 		end
 	end
@@ -307,9 +261,7 @@ function NpcPathfinding.chase(
 		local pPart = model.PrimaryPart
 		if not pPart then return false end
 
-		local current  = pPart.Position
-		local toTarget = targetPos - current
-
+		local toTarget = targetPos - pPart.Position
 		if toTarget.Magnitude <= stopDistance then return true end
 
 		local now        = os.clock()
@@ -325,7 +277,6 @@ function NpcPathfinding.chase(
 
 		if needRepath then
 			if not isModelValid(model) then return false end
-
 			local pPart2 = model.PrimaryPart
 			if not pPart2 then return false end
 
@@ -340,18 +291,12 @@ function NpcPathfinding.chase(
 			end
 		end
 
-		if not waypoints or wpIndex > #waypoints then
-			continue
-		end
+		if not waypoints or wpIndex > #waypoints then continue end
 
 		local wp = waypoints[wpIndex]
-		if not wp then
-			wpIndex += 1
-			continue
-		end
+		if not wp then wpIndex += 1; continue end
 
 		if not isModelValid(model) then return false end
-
 		local pPart3 = model.PrimaryPart
 		if not pPart3 then return false end
 
@@ -366,7 +311,6 @@ function NpcPathfinding.chase(
 
 		local dt = RunService.Heartbeat:Wait()
 		if dt <= 0 then continue end
-
 		if not isModelValid(model) then return false end
 
 		local pPart4 = model.PrimaryPart
@@ -381,11 +325,9 @@ function NpcPathfinding.chase(
 
 		if onStep and isModelValid(model) then
 			local ok, err = pcall(onStep, model, newPos)
-			if not ok then
-				warn("[NpcPathfinding] onStep error:", err)
-			end
+			if not ok then warn("[NpcPathfinding] onStep error:", err) end
 		end
 	end
 end
 
-return NpcPathfinding	
+return NpcPathfinding
