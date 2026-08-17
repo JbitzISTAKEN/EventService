@@ -22,6 +22,7 @@ while not (_G.EffectStartSignals and _G.EffectStartSignals[effectEventName]) do
     task.wait()
 end
 
+print("hey")
 local startedAt  = EventController:GetActiveEventData(EVENT_NAME).startedAt
 local eventTrove = Trove.new()
 local isActive   = true
