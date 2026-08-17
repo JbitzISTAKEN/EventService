@@ -14,10 +14,10 @@ local SharedAnimals   = require(ReplicatedStorage.Shared.Animals)
 
 local LocalPlayer = Players.LocalPlayer
 local EVENT_NAME  = "Trick or Treat"
-local effectEventName = EVENT_NAME:gsub("%s+", "") .. "Event"  -- "TrickorTreatEvent"
+local effectEventName = EVENT_NAME:gsub("%s+", "") .. "Event"
 
--- Wait for the spoofer to signal that the effect has started
--- (uses the global flag set by the spoofer's EffectController.Run hook)
+repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
+
 while not (_G.EffectStartSignals and _G.EffectStartSignals[effectEventName]) do
     task.wait()
 end
@@ -35,7 +35,6 @@ local PumpkinModel = EventScript:WaitForChild("Pumpkin")
 local IdleAnim     = EventScript:WaitForChild("Idle")
 local MoveAnim     = EventScript:WaitForChild("Move")
 
--- ─── Houses ───────────────────────────────────────────────────────────────────
 do
     local obj = game:GetObjects("rbxassetid://115610014866510")[1]
     if obj then
@@ -45,7 +44,6 @@ do
     end
 end
 
--- ─── Door spring ──────────────────────────────────────────────────────────────
 eventTrove:Add(Observers.observeTag("TrickOrTreatDoor", function(door)
     local originCF = door:GetPivot()
     return Observers.observeAttribute(door, "Open", function(open)
@@ -58,7 +56,6 @@ eventTrove:Add(Observers.observeTag("TrickOrTreatDoor", function(door)
     end)
 end))
 
--- ─── Pumpkin model observer ───────────────────────────────────────────────────
 eventTrove:Add(Observers.observeTag("TrickOrTreatEventPumpkin", function(part)
     local t   = Trove.new()
     local mdl = t:Clone(PumpkinModel)
@@ -90,8 +87,7 @@ eventTrove:Add(Observers.observeTag("TrickOrTreatEventPumpkin", function(part)
     return t:WrapClean()
 end, { workspace }))
 
--- ─── Ground stick ─────────────────────────────────────────────────────────────
-local function stickToGround(position: Vector3): Vector3
+local function stickToGround(position)
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Include
     params.FilterDescendantsInstances = {
@@ -102,10 +98,9 @@ local function stickToGround(position: Vector3): Vector3
     return result and result.Position + Vector3.new(0, 0.5, 0) or position
 end
 
--- ─── Wander folder ────────────────────────────────────────────────────────────
 local WANDER_FOLDER = workspace:WaitForChild("Events"):WaitForChild(EVENT_NAME)
 
-local function getWanderParts(): { BasePart }
+local function getWanderParts()
     local parts = {}
     for _, p in ipairs(WANDER_FOLDER:GetChildren()) do
         if p:IsA("BasePart") then table.insert(parts, p) end
@@ -113,13 +108,12 @@ local function getWanderParts(): { BasePart }
     return parts
 end
 
-local function getRandomWanderPart(): BasePart?
+local function getRandomWanderPart()
     local parts = getWanderParts()
     if #parts == 0 then return nil end
     return parts[math.random(1, #parts)]
 end
 
--- ─── Pumpkin constants ────────────────────────────────────────────────────────
 local NUM_PUMPKINS    = 12
 local WANDER_INTERVAL = 2.5
 local WANDER_CHANCE   = 0.65
@@ -130,7 +124,6 @@ local RETURN_SPEED    = 10
 local CHASE_REACH     = 3
 local POST_HIT_WAIT   = 1.5
 
--- pumpkin folder tied directly into eventTrove — Destroy() kills it instantly
 local pumpkinFolder = Instance.new("Folder")
 pumpkinFolder.Name   = "TrickOrTreatPumpkins"
 pumpkinFolder.Parent = workspace
@@ -159,7 +152,7 @@ for i = 1, NUM_PUMPKINS do
     p.CanCollide   = false
     p.CanQuery     = false
     p.Transparency = 1
-    p.Parent       = pumpkinFolder  -- child of folder, dies with it
+    p.Parent       = pumpkinFolder
     p:SetAttribute("Scale", 1)
     CollectionService:AddTag(p, "TrickOrTreatEventPumpkin")
 
@@ -174,7 +167,6 @@ for i = 1, NUM_PUMPKINS do
     pumpkinData[p] = { Home = homePart, IsMoving = false, MoveGen = 0 }
 end
 
--- ─── Wander ───────────────────────────────────────────────────────────────────
 local function wanderPumpkin(pumpkin)
     local data = pumpkinData[pumpkin]
     if not data or data.IsMoving or pTasks[pumpkin] then return end
@@ -219,7 +211,6 @@ local function wanderPumpkin(pumpkin)
     end)
 end
 
--- ─── Return home ──────────────────────────────────────────────────────────────
 local function returnToHome(pumpkin)
     local data = pumpkinData[pumpkin]
     if not data then return end
@@ -261,7 +252,6 @@ local function returnToHome(pumpkin)
     end)
 end
 
--- ─── Chase ────────────────────────────────────────────────────────────────────
 local function chaseAnimal(pumpkin, targetAnimal)
     local data = pumpkinData[pumpkin]
     if not data then return end
@@ -306,7 +296,6 @@ local function chaseAnimal(pumpkin, targetAnimal)
     end)
 end
 
--- ─── Candy screen effect ──────────────────────────────────────────────────────
 local function playScreenCandyEffect()
     local rng        = Random.new()
     local effectsGui = LocalPlayer.PlayerGui:FindFirstChild("Effects")
@@ -329,7 +318,6 @@ local function playScreenCandyEffect()
     end
 end
 
--- ─── House prompt flow ────────────────────────────────────────────────────────
 local radAnimals = { "La Casa Boo", "Pot Pumpkin", "Trickolino" }
 
 eventTrove:Add(ProximityPromptService.PromptTriggered:Connect(function(prompt, plr)
@@ -424,7 +412,6 @@ eventTrove:Add(ProximityPromptService.PromptTriggered:Connect(function(prompt, p
     prompt.Enabled = true
 end))
 
--- ─── Main — same as Easter, but now starts after the global flag ─────────────
 local function main()
     eventTrove:Add(task.spawn(function()
         local gate = timeLeftFor(0)
@@ -469,7 +456,6 @@ local function main()
         end
     end))
 
-    -- exact Easter expiry pattern — poll exits the frame GetActiveEventData returns nil
     while EventController:GetActiveEventData(EVENT_NAME) do task.wait() end
 
     isActive = false
