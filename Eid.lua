@@ -9,7 +9,11 @@ local RunService        = game:GetService("RunService")
 local Trove            = require(ReplicatedStorage.Packages.Trove)
 local EventController  = require(ReplicatedStorage.Controllers.EventController)
 local ClientEventUtils = require(ReplicatedStorage.Controllers.EventController.ClientEventUtils)
-print("fyp thinks im a dork")
+
+-- Gate FIRST — nothing runs until the spoofer confirms event data
+repeat task.wait() until EventController:GetActiveEventData("Eid")
+
+print("hehe")
 
 local EVENT_NAME             = "Eid"
 local TAG_NAME               = "EidBalloon"
@@ -41,11 +45,9 @@ local BALLOON_TRAITS = {
 
 -- ─── Setup ────────────────────────────────────────────────────────────────────
 
--- Gate first — spoofer must confirm event data before the model or Wander are touched
-repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
-
 local events = workspace:WaitForChild("Events")
 
+-- Build the Eid model if it doesn't exist yet
 if not events:FindFirstChild("Eid") then
 	local model = game:GetObjects("rbxassetid://104189817203567")[1]
 	if model then
@@ -54,7 +56,19 @@ if not events:FindFirstChild("Eid") then
 	end
 end
 
-local WANDER_PART = events:WaitForChild("Eid"):WaitForChild("Wander")
+-- Build Wander in code — no WaitForChild race, no asset dependency
+local eidFolder = events:WaitForChild("Eid")
+local WANDER_PART = eidFolder:FindFirstChild("Wander")
+if not WANDER_PART then
+	WANDER_PART = Instance.new("Part")
+	WANDER_PART.Name        = "Wander"
+	WANDER_PART.Anchored    = true
+	WANDER_PART.CanCollide  = false
+	WANDER_PART.Transparency = 1
+	WANDER_PART.Size        = Vector3.new(200, 10, 200)
+	WANDER_PART.CFrame      = eidFolder:GetPivot()
+	WANDER_PART.Parent      = eidFolder
+end
 
 local burstAsset = ReplicatedStorage.Controllers.EventController.Events.Eid.Burst
 
