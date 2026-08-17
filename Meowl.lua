@@ -3,6 +3,7 @@ if not game:IsLoaded() then game.Loaded:Wait() end
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 local RunService        = game:GetService("RunService")
+local Debris            = game:GetService("Debris")
 
 local Trove            = require(ReplicatedStorage.Packages.Trove)
 local Observers        = require(ReplicatedStorage.Packages.Observers)
@@ -35,16 +36,88 @@ end
 
 local MeowlAssets = ReplicatedStorage.Controllers.EventController.Events.Meowl
 
-local sessionTrove     = Trove.new()
-local recentlyTargeted = {}
-local isActive         = true
+local sessionTrove      = Trove.new()
+local spawnedMeowls     = {}
+local originalPositions = {}
+local recentlyTargeted  = {}
+local isActive          = true
 
-local ATTACK_COOLDOWN_MIN = 5
-local ATTACK_COOLDOWN_MAX = 10
 local FLY_SPEED           = 50
 local REACH_DIST          = 5
+local ATTACK_COOLDOWN_MIN = 5
+local ATTACK_COOLDOWN_MAX = 10
 
--- ─── NO observeTag here — controller's data.OnStart already handles visuals ──
+-- ─── Load hitbox folder from asset ───────────────────────────────────────────
+
+local objects = game:GetObjects("rbxassetid://139716127145162")
+for _, obj in objects do
+    obj.Name   = "Meowls"
+    obj.Parent = workspace
+    sessionTrove:Add(obj)
+end
+
+local meowlsFolder = workspace:WaitForChild("Meowls")
+
+-- ─── Visuals via observeTag — fires exactly once per tagged part ──────────────
+-- Server tags each hitbox with "MeowlEventMeowl" once.
+-- Observer fires once per part. One visual welded per hitbox. Done.
+
+sessionTrove:Add(Observers.observeTag("MeowlEventMeowl", function(part)
+    local addTrove = Trove.new()
+
+    local visual  = addTrove:Clone(MeowlAssets.Meowl)
+    visual.Parent = workspace
+
+    local weld     = Instance.new("Weld")
+    weld.Part0     = visual.PrimaryPart
+    weld.Part1     = part
+    weld.C0        = visual.PrimaryPart.PivotOffset
+    weld.Parent    = visual.PrimaryPart
+
+    local animator = visual.AnimationController.Animator
+
+    local idleTrack        = animator:LoadAnimation(MeowlAssets.Idle)
+    idleTrack.Priority     = Enum.AnimationPriority.Idle
+    idleTrack.Looped       = true
+    idleTrack:Play()
+    addTrove:Add(function() idleTrack:Stop(0) idleTrack:Destroy() end)
+
+    local flyTrack         = animator:LoadAnimation(MeowlAssets.Fly)
+    flyTrack.Priority      = Enum.AnimationPriority.Action
+    flyTrack.Looped        = true
+    addTrove:Add(function() flyTrack:Stop(0) flyTrack:Destroy() end)
+
+    local attackTrack      = animator:LoadAnimation(MeowlAssets.Attack)
+    attackTrack.Priority   = Enum.AnimationPriority.Action2
+    attackTrack.Looped     = false
+    addTrove:Add(function() attackTrack:Stop(0) attackTrack:Destroy() end)
+
+    addTrove:Add(Observers.observeAttribute(part, "Flying", function(flying)
+        if flying then flyTrack:Play() else flyTrack:Stop() end
+        return nil
+    end))
+
+    addTrove:Add(part:GetAttributeChangedSignal("Attack"):Connect(function()
+        if part:GetAttribute("Attack") then attackTrack:Play() end
+    end))
+
+    return addTrove:WrapClean()
+end, { workspace }))
+
+-- ─── Register hitbox parts for attack loop ────────────────────────────────────
+-- No tag call here — server already tagged them, adding it again fires observer twice
+
+for _, part in ipairs(meowlsFolder:GetChildren()) do
+    if part:IsA("BasePart") then
+        part.Anchored        = true
+        part.CanCollide      = false
+        part:SetAttribute("Flying", false)
+        part:SetAttribute("Attack", false)
+        originalPositions[part] = part.CFrame
+        table.insert(spawnedMeowls, part)
+    end
+end
+
 -- ─── Burst ────────────────────────────────────────────────────────────────────
 
 local function onBurst(animalName: string)
@@ -59,22 +132,7 @@ local function onBurst(animalName: string)
     end
 end
 
--- ─── Movement — drives the hitbox parts the controller's visuals weld to ─────
-
-local originalPositions: { [BasePart]: CFrame } = {}
-
-local function getSpawnedMeowls(): { BasePart }
-    local result = {}
-    for _, part in ipairs(CollectionService:GetTagged("MeowlEventMeowl")) do
-        if part:IsA("BasePart") then
-            if not originalPositions[part] then
-                originalPositions[part] = part.CFrame
-            end
-            table.insert(result, part)
-        end
-    end
-    return result
-end
+-- ─── Movement ─────────────────────────────────────────────────────────────────
 
 local function flyToTarget(meowl: BasePart, target: Model): boolean
     if not meowl or not meowl.Parent then return false end
@@ -101,11 +159,16 @@ local function flyToTarget(meowl: BasePart, target: Model): boolean
     return false
 end
 
-local function flyBack(meowl: BasePart, originalCFrame: CFrame)
+local function flyBack(meowl: BasePart)
     if not meowl or not meowl.Parent then return end
+    local original = originalPositions[meowl]
+    if not original then
+        meowl:SetAttribute("Flying", false)
+        return
+    end
 
     local start    = meowl.Position
-    local target   = originalCFrame.Position
+    local target   = original.Position
     local distance = (target - start).Magnitude
     local duration = distance / FLY_SPEED
     local t0       = os.clock()
@@ -125,7 +188,7 @@ local function flyBack(meowl: BasePart, originalCFrame: CFrame)
     end
 
     if meowl and meowl.Parent then
-        meowl.CFrame = originalCFrame
+        meowl.CFrame = original
         meowl:SetAttribute("Flying", false)
     end
 end
@@ -147,7 +210,7 @@ local function selectTarget(): (Model?, BasePart?)
     if #candidates == 0 then return nil, nil end
 
     local available = {}
-    for _, meowl in ipairs(getSpawnedMeowls()) do
+    for _, meowl in ipairs(spawnedMeowls) do
         if meowl.Parent and not meowl:GetAttribute("Flying") then
             table.insert(available, meowl)
         end
@@ -167,7 +230,6 @@ sessionTrove:Add(task.spawn(function()
         if not animal or not meowl then continue end
 
         recentlyTargeted[animal.Name] = workspace:GetServerTimeNow()
-        local originalCFrame = originalPositions[meowl] or meowl.CFrame
 
         task.spawn(function()
             local reached = flyToTarget(meowl, animal)
@@ -178,7 +240,7 @@ sessionTrove:Add(task.spawn(function()
                 meowl:SetAttribute("Attack", false)
                 task.wait(0.5)
             end
-            flyBack(meowl, originalCFrame)
+            flyBack(meowl)
         end)
     end
 end))
@@ -189,6 +251,7 @@ sessionTrove:Add(task.spawn(function()
     while EventController:GetActiveEventData(EVENT_NAME) do task.wait() end
     isActive = false
     sessionTrove:Destroy()
-    table.clear(recentlyTargeted)
+    table.clear(spawnedMeowls)
     table.clear(originalPositions)
+    table.clear(recentlyTargeted)
 end))
