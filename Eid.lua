@@ -28,7 +28,7 @@ local BALLOON_WEIGHTS = {
 	["Rainbow"] = 15,
 }
 
-local events = workspace:FindFirstChild("Events") or Instance.new("Folder")
+local events = workspace:FindFirstChild("Events") 
 events.Name   = "Events"
 events.Parent = workspace
 
