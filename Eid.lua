@@ -3,7 +3,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 local HttpService       = game:GetService("HttpService")
 local RunService        = game:GetService("RunService")
-
+print("aquinas")
 local Trove             = require(ReplicatedStorage.Packages.Trove)
 local EventController   = require(ReplicatedStorage.Controllers.EventController)
 local SoundController   = require(ReplicatedStorage.Controllers.SoundController)
