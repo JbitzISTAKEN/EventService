@@ -9,12 +9,12 @@ local PathfindingService = game:GetService("PathfindingService")
 
 local Trove           = require(ReplicatedStorage.Packages.Trove)
 local EventController = require(ReplicatedStorage.Controllers.EventController)
-
+print("hehey")
 -- ─── Config ───────────────────────────────────────────────────────────────────
 
 local EVENT_NAME       = "Mexico"
 local ROACH_SPEED      = 30
-local ROACH_Y_OFFSET   = 1.5
+local ROACH_Y_OFFSET   = 5
 local PUT_HAT_DURATION = 0.5
 local WANDER_FOLDER    = workspace:WaitForChild("Events"):WaitForChild("Wander")
 
