@@ -10,36 +10,17 @@ local Observers       = require(Packages.Observers)
 local Spr             = require(Packages.Spr)
 local Trove           = require(ReplicatedStorage.Packages.Trove)
 local EventController = require(ReplicatedStorage.Controllers.EventController)
-local EffectController = require(ReplicatedStorage.Controllers.EffectController)  -- added
 local SharedAnimals   = require(ReplicatedStorage.Shared.Animals)
 
 local LocalPlayer = Players.LocalPlayer
 local EVENT_NAME  = "Trick or Treat"
+local effectEventName = EVENT_NAME:gsub("%s+", "") .. "Event"  -- "TrickorTreatEvent"
 
--- ─── Gate: wait for event data ─────────────────────────────────────────────
-repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
-
--- ─── Patch EffectController.Activate – only count "Blink" if it's for Trick or Treat ──
-local blinkDetected = false
-local originalActivate = EffectController.Activate
-
-EffectController.Activate = function(self, effectName, ...)
-    if effectName == "Blink" then
-        local args = {...}
-        for _, arg in ipairs(args) do
-            if arg == EVENT_NAME then  -- "Trick or Treat"
-                blinkDetected = true
-                break
-            end
-        end
-    end
-    return originalActivate(self, effectName, ...)
+-- Wait for the spoofer to signal that the effect has started
+-- (uses the global flag set by the spoofer's EffectController.Run hook)
+while not (_G.EffectStartSignals and _G.EffectStartSignals[effectEventName]) do
+    task.wait()
 end
-
--- ─── Wait for that specific Blink ──────────────────────────────────────────
-repeat task.wait() until blinkDetected
-
--- ─── Now set up everything (pumpkins, houses, etc.) ──────────────────────
 
 local startedAt  = EventController:GetActiveEventData(EVENT_NAME).startedAt
 local eventTrove = Trove.new()
@@ -443,7 +424,7 @@ eventTrove:Add(ProximityPromptService.PromptTriggered:Connect(function(prompt, p
     prompt.Enabled = true
 end))
 
--- ─── Main — same as Easter, but now starts after Blink ──────────────────────
+-- ─── Main — same as Easter, but now starts after the global flag ─────────────
 local function main()
     eventTrove:Add(task.spawn(function()
         local gate = timeLeftFor(0)
