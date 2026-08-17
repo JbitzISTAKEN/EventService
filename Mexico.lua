@@ -13,7 +13,7 @@ local EventController = require(ReplicatedStorage.Controllers.EventController)
 local NpcPathfinding = loadstring(game:HttpGet(
     "https://raw.githubusercontent.com/JbitzISTAKEN/EventService/refs/heads/main/NPCPathfinding.lua"
 ))()
-
+print("heheh")
 -- ─── Config ───────────────────────────────────────────────────────────────────
 
 local EVENT_NAME       = "Mexico"
