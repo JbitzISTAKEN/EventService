@@ -3,14 +3,11 @@ if not game:IsLoaded() then game.Loaded:Wait() end
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 local HttpService       = game:GetService("HttpService")
+local RunService        = game:GetService("RunService")
 local Players           = game:GetService("Players")
 
 local Trove           = require(ReplicatedStorage.Packages.Trove)
 local EventController = require(ReplicatedStorage.Controllers.EventController)
-
--- ─── Pathfinding (loadstring, no server module required) ──────────────────────
-
-local NpcPathfinding = loadstring(game:HttpGet("https://raw.githubusercontent.com/JbitzISTAKEN/EventService/refs/heads/main/NPCPathfinding.lua"))()
 
 -- ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -27,6 +24,9 @@ local PLAYER_ATTACK_COOLDOWN_MAX = 25
 local CHASE_MAX_TIME             = 30
 local RECENT_ANIMAL_COOLDOWN     = 15
 local RECENT_PLAYER_COOLDOWN     = 30
+
+local DEFAULT_REACH_THRESHOLD = 1.5
+local DEFAULT_TURN_SPEED      = 8
 
 -- ─── Wait for event ───────────────────────────────────────────────────────────
 
@@ -53,10 +53,259 @@ do
     end
 end
 
--- ─── Ground snap (delegates to NpcPathfinding) ────────────────────────────────
+-- ─── Walkable tag set — mirrors NpcPathfinding exactly ───────────────────────
 
-local function stickToGround(position)
-    return NpcPathfinding.stickToGround(position, ROACH_Y_OFFSET)
+local WALKABLE_TAGS = { "Ground", "Carpet" }
+local walkableParts = {}
+local walkableSet   = {}
+local filterDirty   = true
+
+local groundRayParams = RaycastParams.new()
+groundRayParams.FilterType                 = Enum.RaycastFilterType.Include
+groundRayParams.FilterDescendantsInstances = {}
+groundRayParams.IgnoreWater                = true
+
+local function addWalkable(inst)
+    if not inst then return end
+    if not inst:IsA("BasePart") then return end
+    if walkableSet[inst] then return end
+    walkableSet[inst] = true
+    table.insert(walkableParts, inst)
+    filterDirty = true
+end
+
+local function removeWalkable(inst)
+    if not inst then return end
+    if not walkableSet[inst] then return end
+    walkableSet[inst] = nil
+    for i = #walkableParts, 1, -1 do
+        if walkableParts[i] == inst then
+            table.remove(walkableParts, i)
+            break
+        end
+    end
+    filterDirty = true
+end
+
+for _, tag in ipairs(WALKABLE_TAGS) do
+    for _, inst in ipairs(CollectionService:GetTagged(tag)) do
+        addWalkable(inst)
+    end
+    CollectionService:GetInstanceAddedSignal(tag):Connect(addWalkable)
+    CollectionService:GetInstanceRemovedSignal(tag):Connect(removeWalkable)
+end
+
+local function refreshGroundFilter()
+    if filterDirty then
+        groundRayParams.FilterDescendantsInstances = walkableParts
+        filterDirty = false
+    end
+end
+
+-- ─── stickToGround — exact NpcPathfinding contract ───────────────────────────
+
+local function stickToGround(position, yOffset, castUp, castDown)
+    if not position then return Vector3.new(0, 0, 0) end
+    local up   = castUp   or 10
+    local down = castDown or 50
+    local off  = yOffset  or ROACH_Y_OFFSET
+    refreshGroundFilter()
+    if #walkableParts == 0 then return position end
+    local origin = position + Vector3.new(0, up, 0)
+    local dir    = Vector3.new(0, -(up + down), 0)
+    local ok, result = pcall(function()
+        return workspace:Raycast(origin, dir, groundRayParams)
+    end)
+    if ok and result then
+        return result.Position + Vector3.new(0, off, 0)
+    end
+    return position
+end
+
+-- ─── smoothTurn — exact NpcPathfinding contract ──────────────────────────────
+
+local function isModelValid(model)
+    if not model then return false end
+    if not model.Parent then return false end
+    if not model.PrimaryPart then return false end
+    if not model.PrimaryPart.Parent then return false end
+    return true
+end
+
+local function smoothTurn(model, newPos, flatDir, dt, turnSpeed)
+    if not isModelValid(model) then return end
+    if not newPos or not flatDir then return end
+    if dt <= 0 then return end
+    if flatDir.Magnitude < 1e-4 then
+        local look = model.PrimaryPart.CFrame.LookVector
+        flatDir = Vector3.new(look.X, 0, look.Z)
+        if flatDir.Magnitude < 1e-4 then
+            flatDir = Vector3.new(0, 0, 1)
+        end
+    end
+    flatDir = flatDir.Unit
+    if not isModelValid(model) then return end
+    local pPart = model.PrimaryPart
+    if not pPart then return end
+    local currentCFrame = pPart.CFrame
+    local targetCF = CFrame.new(newPos, newPos + flatDir)
+    local currentRot = CFrame.new(newPos)
+        * CFrame.fromMatrix(
+            Vector3.zero,
+            currentCFrame.RightVector,
+            Vector3.new(0, 1, 0)
+        )
+    local alpha = math.min(1, turnSpeed * dt)
+    if not isModelValid(model) then return end
+    local ok, err = pcall(function()
+        model:PivotTo(currentRot:Lerp(targetCF, alpha))
+    end)
+    if not ok then
+        warn("[Mexico] smoothTurn PivotTo failed:", err)
+    end
+end
+
+-- ─── moveTo — waypoint-based, exact NpcPathfinding moveTo pattern ────────────
+
+local PathfindingService = game:GetService("PathfindingService")
+
+local DEFAULT_AGENT_PARAMS = {
+    AgentRadius     = 2,
+    AgentHeight     = 5,
+    AgentCanJump    = false,
+    AgentCanClimb   = false,
+    WaypointSpacing = 4,
+}
+
+local function computePath(startPos, endPos)
+    if not startPos or not endPos then return nil end
+    local path = PathfindingService:CreatePath(DEFAULT_AGENT_PARAMS)
+    if not path then return nil end
+    local ok = pcall(function() path:ComputeAsync(startPos, endPos) end)
+    if not ok or path.Status ~= Enum.PathStatus.Success then return nil end
+    local waypoints = path:GetWaypoints()
+    if not waypoints or #waypoints == 0 then return nil end
+    local result = table.create(#waypoints)
+    for i = 2, #waypoints do
+        local wp = waypoints[i]
+        if wp and wp.Position then
+            table.insert(result, stickToGround(wp.Position))
+        end
+    end
+    if #result == 0 then
+        table.insert(result, stickToGround(endPos))
+    end
+    return result
+end
+
+local function moveTo(model, targetPos, speed, opts)
+    if not isModelValid(model) then return end
+    if not targetPos then return end
+    opts = opts or {}
+    local maxTime    = opts.maxTime or 30
+    local threshold  = opts.reachThreshold or DEFAULT_REACH_THRESHOLD
+    local shouldStop = opts.shouldStop
+    local pPart = model.PrimaryPart
+    if not pPart then return end
+    local waypoints = computePath(pPart.Position, targetPos)
+    if not waypoints or #waypoints == 0 then return end
+    local startClock = os.clock()
+    for _, wp in ipairs(waypoints) do
+        if not wp then continue end
+        while true do
+            if shouldStop and shouldStop() then return end
+            if not isModelValid(model) then return end
+            if os.clock() - startClock > maxTime then return end
+            local pp = model.PrimaryPart
+            if not pp then return end
+            local toWp    = wp - pp.Position
+            local flatVec = Vector3.new(toWp.X, 0, toWp.Z)
+            local wpDist  = flatVec.Magnitude
+            if wpDist <= threshold then break end
+            local dt = RunService.Heartbeat:Wait()
+            if dt <= 0 then continue end
+            if not isModelValid(model) then return end
+            local pp2 = model.PrimaryPart
+            if not pp2 then return end
+            local moveAmt = math.min(speed * dt, wpDist)
+            local flatDir = flatVec.Unit
+            local newXZ   = pp2.Position + flatDir * moveAmt
+            local newPos  = stickToGround(newXZ)
+            smoothTurn(model, newPos, flatDir, dt, DEFAULT_TURN_SPEED)
+        end
+    end
+end
+
+-- ─── chase — repath loop, exact NpcPathfinding chase pattern ─────────────────
+
+local function chase(model, getTargetPos, speed, stopDistance, maxTime, opts)
+    if not isModelValid(model) then return false end
+    stopDistance = stopDistance or 3
+    maxTime      = maxTime      or 30
+    opts         = opts         or {}
+    local repathInterval = opts.repathInterval            or 0.6
+    local moveRepath     = opts.targetMoveRepathThreshold or 5
+    local shouldStop     = opts.shouldStop
+    local startClock    = os.clock()
+    local lastRepath    = -math.huge
+    local lastTargetPos = nil
+    local waypoints     = nil
+    local wpIndex       = 1
+    while true do
+        if shouldStop and shouldStop() then return false end
+        if not isModelValid(model) then return false end
+        if os.clock() - startClock > maxTime then return false end
+        local targetPos = getTargetPos()
+        if not targetPos then return false end
+        local pPart = model.PrimaryPart
+        if not pPart then return false end
+        if (targetPos - pPart.Position).Magnitude <= stopDistance then return true end
+        local now        = os.clock()
+        local needRepath = false
+        if not waypoints or wpIndex > #waypoints then
+            needRepath = true
+        elseif now - lastRepath >= repathInterval then
+            needRepath = true
+        elseif lastTargetPos and (targetPos - lastTargetPos).Magnitude >= moveRepath then
+            needRepath = true
+        end
+        if needRepath then
+            if not isModelValid(model) then return false end
+            local pp2 = model.PrimaryPart
+            if not pp2 then return false end
+            waypoints     = computePath(pp2.Position, targetPos)
+            wpIndex       = 1
+            lastRepath    = now
+            lastTargetPos = targetPos
+            if not waypoints or #waypoints == 0 then
+                task.wait(0.1)
+                continue
+            end
+        end
+        if not waypoints or wpIndex > #waypoints then continue end
+        local wp = waypoints[wpIndex]
+        if not wp then wpIndex += 1 continue end
+        if not isModelValid(model) then return false end
+        local pp3 = model.PrimaryPart
+        if not pp3 then return false end
+        local toWp    = wp - pp3.Position
+        local flatVec = Vector3.new(toWp.X, 0, toWp.Z)
+        local wpDist  = flatVec.Magnitude
+        if wpDist <= DEFAULT_REACH_THRESHOLD then
+            wpIndex += 1
+            continue
+        end
+        local dt = RunService.Heartbeat:Wait()
+        if dt <= 0 then continue end
+        if not isModelValid(model) then return false end
+        local pp4 = model.PrimaryPart
+        if not pp4 then return false end
+        local moveAmt = math.min(speed * dt, wpDist)
+        local flatDir = flatVec.Unit
+        local newXZ   = pp4.Position + flatDir * moveAmt
+        local newPos  = stickToGround(newXZ)
+        smoothTurn(model, newPos, flatDir, dt, DEFAULT_TURN_SPEED)
+    end
 end
 
 -- ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -173,7 +422,7 @@ local function followAndAttack(roachData, targetAnimal)
     local attackTrove = eventTrove:Extend()
 
     attackTrove:Add(task.spawn(function()
-        local reached = NpcPathfinding.chase(
+        local reached = chase(
             roach,
             function()
                 if not targetAnimal or not targetAnimal.Parent or not targetAnimal.PrimaryPart then
@@ -185,7 +434,6 @@ local function followAndAttack(roachData, targetAnimal)
             3,
             CHASE_MAX_TIME,
             {
-                yOffset    = ROACH_Y_OFFSET,
                 shouldStop = function()
                     return not activeAttacks[attackId] or not isActive or isPaused
                 end,
@@ -316,7 +564,7 @@ local function main()
         ))
     end
 
-    -- wander tick — NpcPathfinding.moveTo handles waypoints
+    -- wander tick
     eventTrove:Add(task.spawn(function()
         while isActive do
             task.wait(1)
@@ -331,9 +579,8 @@ local function main()
                 rd.LastWander = now
                 task.spawn(function()
                     roach:SetAttribute("IsRunning", true)
-                    NpcPathfinding.moveTo(roach, getRandomWanderPos(rd.WanderPart), ROACH_SPEED, {
+                    moveTo(roach, getRandomWanderPos(rd.WanderPart), ROACH_SPEED, {
                         maxTime    = 15,
-                        yOffset    = ROACH_Y_OFFSET,
                         shouldStop = function()
                             return not isActive or not roach.Parent or rd.IsAttacking or isPaused
                         end,
@@ -431,11 +678,11 @@ local function main()
     -- shutdown
     while EventController:GetActiveEventData(EVENT_NAME) do task.wait() end
 
-    isActive              = false
-    isPaused              = false
-    activeAttacks         = {}
-    spawnedRoaches        = {}
-    recentlyTargeted      = {}
+    isActive                = false
+    isPaused                = false
+    activeAttacks           = {}
+    spawnedRoaches          = {}
+    recentlyTargeted        = {}
     recentlyTargetedPlayers = {}
     eventTrove:Destroy()
 end
