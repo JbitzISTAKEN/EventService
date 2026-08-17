@@ -5,8 +5,9 @@ local Debris            = game:GetService("Debris")
 
 if not game:IsLoaded() then game.Loaded:Wait() end
 
-local Trove           = require(ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Trove"))
-local EventController = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("EventController"))
+local Trove            = require(ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Trove"))
+local EventController  = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("EventController"))
+local ClientEventUtils = require(ReplicatedStorage:WaitForChild("Controllers"):WaitForChild("EventController"):WaitForChild("ClientEventUtils"))
 
 local EVENT_NAME = "Meowl"
 
@@ -42,6 +43,8 @@ local MeowlAssets = ReplicatedStorage:WaitForChild("Controllers")
     :WaitForChild("EventController")
     :WaitForChild("Events")
     :WaitForChild("Meowl")
+
+local burstAsset = MeowlAssets:WaitForChild("Burst")
 
 local sessionTrove      = Trove.new()
 local spawnedMeowls     = {}
@@ -105,23 +108,17 @@ for _, part in ipairs(meowlsFolder:GetChildren()) do
     end
 end
 
+-- ─── Burst ────────────────────────────────────────────────────────────────────
+
 local function doBurst(target: Model)
     if not target or not target.PrimaryPart then return end
-    local burst = MeowlAssets:WaitForChild("Burst"):Clone()
-    burst.Parent = target.PrimaryPart
-    if burst:IsA("BasePart") then
-        burst.CFrame = CFrame.new(target.PrimaryPart.Position)
-    end
-    for _, v in ipairs(burst:GetDescendants()) do
-        if v:IsA("ParticleEmitter") then
-            v.Enabled = true
-            task.delay(BURST_DURATION, function() v.Enabled = false end)
-        elseif v:IsA("Sound") then
-            v:Play()
-        end
-    end
-    Debris:AddItem(burst, BURST_DURATION + 2)
+    ClientEventUtils.playBurst(burstAsset, target.PrimaryPart, {
+        ReplicatedStorage.Sounds.Events.Meowl.BrainrotHit,
+        ReplicatedStorage.Sounds.Events.Meowl.Flap,
+    })
 end
+
+-- ─── Movement ─────────────────────────────────────────────────────────────────
 
 local function flyToTarget(meowl: BasePart, target: Model): boolean
     if not meowl or not meowl.Parent then return false end
@@ -182,6 +179,8 @@ local function flyBack(meowl: BasePart)
     end
 end
 
+-- ─── Attack loop ──────────────────────────────────────────────────────────────
+
 local function selectTarget(): (Model?, BasePart?)
     local now = workspace:GetServerTimeNow()
     for k, t in pairs(recentlyTargeted) do
@@ -231,6 +230,8 @@ sessionTrove:Add(task.spawn(function()
         end)
     end
 end))
+
+-- ─── Cleanup ──────────────────────────────────────────────────────────────────
 
 sessionTrove:Add(task.spawn(function()
     while EventController:GetActiveEventData(EVENT_NAME) do task.wait() end
