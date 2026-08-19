@@ -12,6 +12,23 @@ local filterDirty   = true
 local DEFAULT_REACH_THRESHOLD = 1.5
 local DEFAULT_TURN_SPEED = 8
 
+-- ─── Tag the three specific ground parts ─────────────────────────────────────
+local partsToTag = {
+    workspace:FindFirstChild("Map") and workspace.Map:FindFirstChild("Ground_Right"),
+    workspace:FindFirstChild("Map") and workspace.Map:FindFirstChild("Ground_Left"),
+    workspace:FindFirstChild("Map") and workspace.Map:FindFirstChild("Ground"),
+}
+
+for _, part in ipairs(partsToTag) do
+    if part and part:IsA("BasePart") then
+        CollectionService:AddTag(part, "Ground")
+        print("Tagged:", part:GetFullName())
+    else
+        warn("[NpcPathfinding] Could not find a ground part to tag")
+    end
+end
+-- ────────────────────────────────────────────────────────────────────────────────
+
 local function isModelValid(model: Model): boolean
 	if not model then return false end
 	if not model.Parent then return false end
