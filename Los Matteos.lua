@@ -8,6 +8,7 @@ local Debris            = game:GetService("Debris")
 
 if not game:IsLoaded() then game.Loaded:Wait() end
 
+
 local Trove           = require(ReplicatedStorage.Packages.Trove)
 local EvLightning     = require(ReplicatedStorage.Packages.EvLightning)
 local Shake           = require(ReplicatedStorage.Packages.Shake)
@@ -36,10 +37,12 @@ local ROOTS_ASSET_ID        = "rbxassetid://103628309756671"
 local CLOUD_STRIKE_RADIUS   = 100
 local CLOUD_STRIKE_COLOR    = Color3.fromRGB(90, 109, 161)
 
--- ─── Cloud pool (mirrors v99 in decompiled client) ────────────────────────────
+-- ─── Cloud name lookup ────────────────────────────────────────────────────────
 
--- Each entry: { instance: BasePart, speed: number, startPos: Vector3, endPos: Vector3 }
-local cloudPool: { { instance: BasePart, speed: number, startPos: Vector3, endPos: Vector3 } } = {}
+local cloudNames = {}
+for _, template in EVENT_SCRIPT.Clouds:GetChildren() do
+	cloudNames[template.Name] = true
+end
 
 -- ─── Preload roots ────────────────────────────────────────────────────────────
 
@@ -49,10 +52,10 @@ task.spawn(function()
 	local objects = game:GetObjects(ROOTS_ASSET_ID)
 	local obj     = objects and objects[1]
 	if obj then
-	obj.Name   = "Roots"
-	obj.Parent = ReplicatedStorage
-	rootsTemplate = obj
-		else
+		obj.Name   = "Roots"
+		obj.Parent = ReplicatedStorage
+		rootsTemplate = obj
+	else
 		warn("[LosMatteos] Failed to load roots asset")
 	end
 end)
@@ -126,26 +129,19 @@ local function getRainArea(): BasePart?
 	return model and model:FindFirstChild("RainArea") :: BasePart
 end
 
--- ─── Cloud pool registration ──────────────────────────────────────────────────
--- Call this whenever a cloud part is spawned into the scene so fireLocalLightning
--- can pick from it. Mirrors the table.insert(v99, ...) calls in the decompiled client.
+-- ─── Live cloud lookup ────────────────────────────────────────────────────────
 
-local function registerCloud(inst: BasePart, speed: number, startPos: Vector3, endPos: Vector3)
-	table.insert(cloudPool, {
-		instance = inst,
-		speed    = speed,
-		startPos = startPos,
-		endPos   = endPos,
-	})
-end
-
-local function unregisterCloud(inst: BasePart)
-	for i = #cloudPool, 1, -1 do
-		if cloudPool[i].instance == inst then
-			table.remove(cloudPool, i)
-			break
+local function getNearbyLiveClouds(strikePos: Vector3): { BasePart }
+	local results = {}
+	for _, inst in workspace.CurrentCamera:GetChildren() do
+		if inst:IsA("BasePart") and cloudNames[inst.Name] then
+			local flat = (inst.Position - strikePos) * Vector3.new(1, 0, 1)
+			if flat.Magnitude < CLOUD_STRIKE_RADIUS then
+				table.insert(results, inst)
+			end
 		end
 	end
+	return results
 end
 
 -- ─── Lightning ────────────────────────────────────────────────────────────────
@@ -165,21 +161,15 @@ local function fireLocalLightning(strikePos: Vector3, hitAnimal: boolean)
 		s:Start()
 	end
 
-	-- pick bolt origin from cloud pool (mirrors decompiled v99 cloud pick)
-	local nearbyClouds = {}
-	for _, entry in cloudPool do
-		local flat = (entry.instance.Position - strikePos) * Vector3.new(1, 0, 1)
-		if flat.Magnitude < CLOUD_STRIKE_RADIUS then
-			table.insert(nearbyClouds, entry.instance)
-		end
-	end
+	-- pick bolt origin from live clouds
+	local nearbyClouds = getNearbyLiveClouds(strikePos)
 
 	local boltStart: Vector3
 	if #nearbyClouds > 0 then
 		local chosenCloud = nearbyClouds[rng:NextInteger(1, #nearbyClouds)]
 		boltStart = chosenCloud.Position
 
-		-- tint cloud on strike, tween back (mirrors decompiled flash)
+		-- tint and tween back
 		local originalColor = chosenCloud.Color
 		chosenCloud.Color = CLOUD_STRIKE_COLOR
 		TweenService:Create(
@@ -188,7 +178,7 @@ local function fireLocalLightning(strikePos: Vector3, hitAnimal: boolean)
 			{ Color = originalColor }
 		):Play()
 
-		-- cloud particles on strike (mirrors script.CloudParticles loop)
+		-- cloud particles
 		if EVENT_SCRIPT:FindFirstChild("CloudParticles") then
 			for _, particle in EVENT_SCRIPT.CloudParticles:GetChildren() do
 				local p = particle:Clone()
@@ -354,111 +344,6 @@ local function runLightningStrike()
 	end
 end
 
--- ─── Cloud spawner (mirrors v142/v128 in decompiled client) ──────────────────
-
-local function startClouds()
-	local cloudsStart = workspace.Events["Los Matteos"]:FindFirstChild("CloudsStart")
-	local cloudsEnd   = workspace.Events["Los Matteos"]:FindFirstChild("CloudsEnd")
-	if not cloudsStart or not cloudsEnd then
-		warn("[LosMatteos] CloudsStart or CloudsEnd not found")
-		return
-	end
-
-	local cloudTemplates = EVENT_SCRIPT.Clouds:GetChildren()
-	if #cloudTemplates == 0 then
-		warn("[LosMatteos] No cloud templates found")
-		return
-	end
-
-	local startPos  = cloudsStart.Position
-	local startSize = cloudsStart.Size
-	local endPos    = cloudsEnd.Position
-
-	local function spawnCloud(row: number?, col: number?)
-		local zOffset = startPos.Z + (row or 0) * 30 + (col or 0)
-		local template = cloudTemplates[math.random(1, #cloudTemplates)]
-		local cloud    = eventTrove:Clone(template)
-		cloud.Transparency = 1
-
-		cloud.CFrame = CFrame.new(
-			startPos.X + math.random(-startSize.X * 0.5, startSize.X * 0.5),
-			startPos.Y,
-			zOffset
-		)
-
-		local targetPos = Vector3.new(cloud.Position.X, startPos.Y, endPos.Z)
-
-		-- skip clouds already past the end
-		if (endPos - startPos):Dot(targetPos - cloud.Position) < 0 then
-			cloud:Destroy()
-			return
-		end
-
-		cloud.Parent = workspace.CurrentCamera
-
-		local speed = math.clamp(50 / cloud.Size.Magnitude, 5, 15) * (math.random(80, 120) / 100)
-		local colDelay = (col or 0) * 0.1 + (math.abs(row or 0) + 1) * 0.5
-
-		TweenService:Create(
-			cloud,
-			TweenInfo.new(0.5, Enum.EasingStyle.Linear, Enum.EasingDirection.Out, 0, false, colDelay),
-			{ Transparency = 0 }
-		):Play()
-
-		local entry = {
-			instance = cloud,
-			speed    = speed,
-			startPos = cloud.Position,
-			endPos   = targetPos,
-		}
-		registerCloud(cloud, speed, cloud.Position, targetPos)
-
-		return entry
-	end
-
-	-- initial spawn: 50 clouds, same row/col pattern as decompiled
-	local row = 0
-	for col = 1, 50 do
-		spawnCloud(row, col)
-		if col % 3 == 1 then
-			row += 1
-		end
-	end
-
-	-- movement loop (mirrors PostSimulation connect in decompiled)
-	eventTrove:Add(RunService.PostSimulation:Connect(function(dt)
-		for i = #cloudPool, 1, -1 do
-			local entry = cloudPool[i]
-			local inst  = entry.instance
-			if not inst or not inst.Parent then
-				table.remove(cloudPool, i)
-				continue
-			end
-
-			local pos      = inst.Position
-			local dir      = (entry.endPos - pos)
-			local mag      = dir.Magnitude
-			local step     = entry.speed * dt
-
-			if mag < step then
-				-- cloud reached end, fade and replace
-				table.remove(cloudPool, i)
-				TweenService:Create(
-					inst,
-					TweenInfo.new(0.5, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
-					{ Transparency = 1 }
-				).Completed:Connect(function()
-					inst:Destroy()
-				end)
-				spawnCloud()
-			else
-				local norm = dir / mag
-				inst.CFrame = CFrame.lookAt(pos + norm * step, pos + norm * step + norm)
-			end
-		end
-	end))
-end
-
 -- ─── Roots ────────────────────────────────────────────────────────────────────
 
 local function spawnRoots()
@@ -472,8 +357,8 @@ local function spawnRoots()
 	end
 
 	local rootsClone = rootsTemplate:Clone()
-
 	local mapCenterPos = MapInfo.MapCenter.Position
+
 	local rp = RaycastParams.new()
 	rp.FilterType = Enum.RaycastFilterType.Include
 	rp.FilterDescendantsInstances = {
@@ -512,16 +397,13 @@ local function spawnRoots()
 		rootsSound:Play()
 		eventTrove:Add(ReplicatedStorage:GetAttributeChangedSignal("LosMatteosGrowing"):Connect(function()
 			local growing = ReplicatedStorage:GetAttribute("LosMatteosGrowing")
-			if rootsSound then
-				rootsSound.Looped = growing ~= false
-				if growing == false then
-					rootsSound:Stop()
-				end
+			rootsSound.Looped = growing ~= false
+			if growing == false then
+				rootsSound:Stop()
 			end
 		end))
-		-- hard stop at grow completion in case attribute never fires
 		eventTrove:Add(task.delay(ROOTS_GROW_DURATION, function()
-			if rootsSound and rootsSound.IsPlaying then
+			if rootsSound.IsPlaying then
 				rootsSound:Stop()
 			end
 		end))
@@ -539,20 +421,11 @@ end
 -- ─── Main ─────────────────────────────────────────────────────────────────────
 
 local function main()
-	-- clouds
-	local cloudsDelay = math.max(0, timeLeftFor(8))
-	eventTrove:Add(task.delay(cloudsDelay, function()
-		if not isActive then return end
-		startClouds()
-	end))
-
-	-- roots
 	eventTrove:Add(task.delay(math.max(0, timeLeftFor(ROOTS_START_DELAY)), function()
 		if not isActive then return end
 		spawnRoots()
 	end))
 
-	-- lightning loop
 	eventTrove:Add(task.delay(math.max(0, timeLeftFor(LIGHTNING_START_DELAY)), function()
 		while isActive and EventController:GetActiveEventData(EVENT_NAME) do
 			task.wait(LIGHTNING_INTERVAL)
@@ -560,10 +433,8 @@ local function main()
 		end
 	end))
 
-	-- cleanup watchdog
 	while EventController:GetActiveEventData(EVENT_NAME) do task.wait(1) end
 	isActive = false
-	table.clear(cloudPool)
 	eventTrove:Destroy()
 	table.clear(recentlyTargeted)
 
