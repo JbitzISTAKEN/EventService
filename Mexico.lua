@@ -24,7 +24,7 @@ local ATTACK_COOLDOWN_MAX        = 10
 local PLAYER_ATTACK_COOLDOWN_MIN = 15
 local PLAYER_ATTACK_COOLDOWN_MAX = 25
 local CHASE_MAX_TIME             = 30
-local CHASE_REACH_DIST           = 5
+local CHASE_REACH_DIST           = 6
 local RECENT_ANIMAL_COOLDOWN     = 15
 local RECENT_PLAYER_COOLDOWN     = 30
 
