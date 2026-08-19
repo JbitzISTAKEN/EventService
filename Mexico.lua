@@ -1,10 +1,11 @@
-if not game:IsLoaded() then game.Loaded:Wait() end
 
 local ReplicatedStorage  = game:GetService("ReplicatedStorage")
 local CollectionService  = game:GetService("CollectionService")
 local HttpService        = game:GetService("HttpService")
 local RunService         = game:GetService("RunService")
 local Players            = game:GetService("Players")
+
+if not game:IsLoaded() then game.Loaded:Wait() end
 
 local Trove           = require(ReplicatedStorage.Packages.Trove)
 local EventController = require(ReplicatedStorage.Controllers.EventController)
@@ -39,22 +40,6 @@ local EVENT_SCRIPT = ReplicatedStorage
     :WaitForChild("Events")
     :WaitForChild("Mexico")
 
--- ─── Sombrero — preload into ReplicatedStorage ────────────────────────────────
-
-local sombreroTemplate = nil
-
-task.spawn(function()
-    local objects = game:GetObjects("rbxassetid://99466679730663")
-    local obj     = objects and objects[1]
-    if obj then
-        obj.Name   = "Sombrero"
-        obj.Parent = ReplicatedStorage
-        sombreroTemplate = obj
-    else
-        warn("[Mexico] Failed to load sombrero asset")
-    end
-end)
-
 -- ─── Wait for event ───────────────────────────────────────────────────────────
 
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
@@ -66,8 +51,9 @@ local startedAt = eventData.startedAt
 local eventTrove              = Trove.new()
 local spawnedRoaches          = {}
 local activeAttacks           = {}
-local recentlyTargeted        = {}
-local recentlyTargetedPlayers = {}
+-- keyed by Instance reference, not name
+local recentlyTargeted        = {}   -- [animal_instance] = serverTime
+local recentlyTargetedPlayers = {}   -- [player_instance]  = serverTime
 local isActive                = true
 local isPaused                = false
 
@@ -115,13 +101,45 @@ local function giveSombrero(animal)
     animal:SetAttribute("Traits", HttpService:JSONEncode(traits))
 end
 
-local function doBurst(targetAnimal)
-    if not targetAnimal or not targetAnimal.PrimaryPart then return end
+-- burst fires exactly like ClientEventUtils.playBurst expects —
+-- position from PrimaryPart, sound table from EVENT_SCRIPT
+local function doBurst(targetModel)
+    if not targetModel or not targetModel.PrimaryPart then return end
     ClientEventUtils.playBurst(
         EVENT_SCRIPT.Burst,
-        targetAnimal.PrimaryPart.Position,
+        targetModel.PrimaryPart.Position,
         { ReplicatedStorage.Sounds.Events.Mexico.Hit }
     )
+end
+
+-- hat weld: matches the working snippet exactly, no AddAccessory
+local function weldSombreroToHead(character)
+    local head = character:FindFirstChild("Head")
+    if not head then return end
+
+    -- already has one
+    if character:FindFirstChild("SombreroHat") then return end
+
+    local objects = game:GetObjects("rbxassetid://99466679730663")
+    local acc     = objects and objects[1]
+    if not acc then
+        warn("[Mexico] sombrero asset failed to load")
+        return
+    end
+
+    local handle = acc:FindFirstChild("Handle")
+    if not handle then return end
+
+    handle.CanCollide = false
+    handle.Massless   = true
+    acc.Name          = "SombreroHat"
+    acc.Parent        = character
+
+    local w   = Instance.new("Weld", handle)
+    w.Part0   = head
+    w.Part1   = handle
+    w.C0      = head:FindFirstChild("HatAttachment") and head.HatAttachment.CFrame or CFrame.new(0, 0.6, 0)
+    w.C1      = handle:FindFirstChild("HatAttachment") and handle.HatAttachment.CFrame or CFrame.identity
 end
 
 -- ─── Roach model ──────────────────────────────────────────────────────────────
@@ -199,13 +217,13 @@ end
 
 -- ─── Attack ───────────────────────────────────────────────────────────────────
 
-local function followAndAttack(roachData, targetAnimal)
+local function followAndAttack(roachData, targetModel, isPlayer)
     local roach = roachData.Model
     if not roach or not roach.Parent then return end
     if roachData.IsAttacking then return end
 
     roachData.IsAttacking = true
-    local attackId = tostring(math.random(1e9))
+    local attackId = HttpService:GenerateGUID(false)
     activeAttacks[attackId] = true
 
     local originalInstrument = roachData.BaseInstrument
@@ -221,13 +239,14 @@ local function followAndAttack(roachData, targetAnimal)
     local attackTrove = eventTrove:Extend()
 
     attackTrove:Add(task.spawn(function()
+
         local reached = NpcPathfinding.chase(
             roach,
             function()
-                if not targetAnimal or not targetAnimal.Parent or not targetAnimal.PrimaryPart then
+                if not targetModel or not targetModel.Parent or not targetModel.PrimaryPart then
                     return nil
                 end
-                return targetAnimal.PrimaryPart.Position
+                return targetModel.PrimaryPart.Position
             end,
             ROACH_SPEED,
             CHASE_REACH_DIST,
@@ -242,24 +261,24 @@ local function followAndAttack(roachData, targetAnimal)
 
         roach:SetAttribute("IsRunning", false)
 
-        if reached and targetAnimal and targetAnimal.Parent and targetAnimal.PrimaryPart then
+        if reached and targetModel and targetModel.Parent and targetModel.PrimaryPart then
             roach:SetAttribute("Dance",           true)
             roach:SetAttribute("Instrument",      "Sombrero")
             roach:SetAttribute("AttackAnimation", (roach:GetAttribute("AttackAnimation") or 0) + 1)
 
-            -- close remaining gap before hat placement
+            -- close remaining gap
             local closeStart = os.clock()
-            while targetAnimal and targetAnimal.Parent and targetAnimal.PrimaryPart
+            while targetModel and targetModel.Parent and targetModel.PrimaryPart
                 and not isPaused
                 and os.clock() - closeStart < PUT_HAT_DURATION + 1
             do
                 if not roach.Parent or not roach.PrimaryPart then break end
-                local tgtPos = targetAnimal.PrimaryPart.Position
+                local tgtPos = targetModel.PrimaryPart.Position
                 local myPos  = roach.PrimaryPart.Position
                 local diff   = tgtPos - myPos
                 local dist   = diff.Magnitude
                 if dist <= 1.5 then break end
-                local dt = task.wait()
+                local dt  = task.wait()
                 local dir = diff.Unit
                 local flat = Vector3.new(dir.X, 0, dir.Z)
                 if flat.Magnitude > 1e-4 then
@@ -273,14 +292,14 @@ local function followAndAttack(roachData, targetAnimal)
             local elapsed  = 0
             local lastTime = os.clock()
             while elapsed < PUT_HAT_DURATION
-                and targetAnimal and targetAnimal.Parent and targetAnimal.PrimaryPart
+                and targetModel and targetModel.Parent and targetModel.PrimaryPart
                 and not isPaused
             do
                 local now = os.clock()
                 local dt  = now - lastTime
                 lastTime  = now
                 elapsed  += dt
-                local tgtPos = targetAnimal.PrimaryPart.Position
+                local tgtPos = targetModel.PrimaryPart.Position
                 local myPos  = roach.PrimaryPart.Position
                 local diff   = tgtPos - myPos
                 local dist   = diff.Magnitude
@@ -296,30 +315,21 @@ local function followAndAttack(roachData, targetAnimal)
                 task.wait()
             end
 
-            -- burst effect
-            doBurst(targetAnimal)
+            -- burst fires on the model, position pulled from PrimaryPart
+            doBurst(targetModel)
 
-            -- give sombrero
-            local player = Players:GetPlayerFromCharacter(targetAnimal)
-            if player then
-                -- player: Accessory via AddAccessory
-                if sombreroTemplate and not targetAnimal:FindFirstChild("SombreroHat") then
-                    local humanoid = targetAnimal:FindFirstChildOfClass("Humanoid")
-                    if humanoid then
-                        local hat  = sombreroTemplate:Clone()
-                        hat.Name   = "SombreroHat"
-                        humanoid:AddAccessory(hat)
-                    end
-                end
+            if isPlayer then
+                -- player: weld via the working snippet
+                weldSombreroToHead(targetModel)
             else
-                -- animal: traits
-                giveSombrero(targetAnimal)
+                -- animal: traits attribute
+                giveSombrero(targetModel)
             end
 
             roach:SetAttribute("Instrument", originalInstrument)
             task.wait(1)
         else
-            -- chase timed out or target gone — clear attack state so roach isn't permanently locked
+            -- timed out or target gone — don't permanently lock the roach
             roach:SetAttribute("Instrument", originalInstrument)
         end
 
@@ -402,7 +412,7 @@ local function main()
         end
     end))
 
-    -- animal attack tick
+    -- animal attack tick — keyed by instance reference, not name
     eventTrove:Add(task.spawn(function()
         while isActive do
             task.wait(math.random(ATTACK_COOLDOWN_MIN, ATTACK_COOLDOWN_MAX))
@@ -412,14 +422,16 @@ local function main()
             end
 
             local now = workspace:GetServerTimeNow()
-            for name, t in pairs(recentlyTargeted) do
-                if (now - t) > RECENT_ANIMAL_COOLDOWN then recentlyTargeted[name] = nil end
+
+            -- expire by instance key
+            for inst, t in pairs(recentlyTargeted) do
+                if (now - t) > RECENT_ANIMAL_COOLDOWN then recentlyTargeted[inst] = nil end
             end
 
             local candidates = {}
             for _, animal in ipairs(CollectionService:GetTagged("Animal")) do
                 if animal.PrimaryPart
-                    and not recentlyTargeted[animal.Name]
+                    and not recentlyTargeted[animal]        -- instance key, no name collision
                     and not animalHasSombrero(animal)
                 then
                     table.insert(candidates, animal)
@@ -437,12 +449,12 @@ local function main()
             end
             if not freeRoach then continue end
 
-            recentlyTargeted[target.Name] = now
-            followAndAttack(freeRoach, target)
+            recentlyTargeted[target] = now
+            followAndAttack(freeRoach, target, false)
         end
     end))
 
-    -- player attack tick
+    -- player attack tick — keyed by player instance
     eventTrove:Add(task.spawn(function()
         while isActive do
             task.wait(math.random(PLAYER_ATTACK_COOLDOWN_MIN, PLAYER_ATTACK_COOLDOWN_MAX))
@@ -452,16 +464,19 @@ local function main()
             end
 
             local now = workspace:GetServerTimeNow()
-            for name, t in pairs(recentlyTargetedPlayers) do
-                if (now - t) > RECENT_PLAYER_COOLDOWN then recentlyTargetedPlayers[name] = nil end
+
+            for inst, t in pairs(recentlyTargetedPlayers) do
+                if (now - t) > RECENT_PLAYER_COOLDOWN then recentlyTargetedPlayers[inst] = nil end
             end
 
             local candidates = {}
             for _, player in ipairs(Players:GetPlayers()) do
                 local char = player.Character
-                if char and char:FindFirstChild("HumanoidRootPart")
-                    and not player:GetAttribute("HasSombreroHat")
-                    and not recentlyTargetedPlayers[player.Name]
+                -- check character for existing hat, not a player attribute
+                if char
+                    and char:FindFirstChild("HumanoidRootPart")
+                    and not char:FindFirstChild("SombreroHat")
+                    and not recentlyTargetedPlayers[player]
                 then
                     table.insert(candidates, player)
                 end
@@ -478,9 +493,9 @@ local function main()
             end
             if not freeRoach then continue end
 
-            recentlyTargetedPlayers[selected.Name] = now
-            selected:SetAttribute("HasSombreroHat", true)
-            followAndAttack(freeRoach, selected.Character)
+            recentlyTargetedPlayers[selected] = now
+            -- hat is placed on confirmed hit inside followAndAttack, not before
+            followAndAttack(freeRoach, selected.Character, true)
         end
     end))
 
@@ -494,11 +509,6 @@ local function main()
     recentlyTargeted        = {}
     recentlyTargetedPlayers = {}
     eventTrove:Destroy()
-
-    if sombreroTemplate and sombreroTemplate.Parent then
-        sombreroTemplate:Destroy()
-        sombreroTemplate = nil
-    end
 end
 
 task.spawn(main)
