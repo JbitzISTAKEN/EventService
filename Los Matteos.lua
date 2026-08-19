@@ -15,8 +15,8 @@ local SoundController = require(ReplicatedStorage.Controllers.SoundController)
 local EventController = require(ReplicatedStorage.Controllers.EventController)
 local MapInfo         = require(ReplicatedStorage.Shared.MapInformation)
 
-local EVENT_NAME   = "Los Matteos"
-local TRAIT_NAME   = "Matteo Hat"
+local EVENT_NAME  = "Los Matteos"
+local TRAIT_NAME  = "Matteo Hat"
 
 local EVENT_SCRIPT = ReplicatedStorage.Controllers.EventController.Events["Los Matteos"]
 local Sounds       = ReplicatedStorage.Sounds.Events["Los Matteos"]
@@ -30,6 +30,23 @@ local HIT_CHANCE            = 5
 local RETARGET_COOLDOWN     = 15
 local ROOTS_START_DELAY     = 7
 local ROOTS_GROW_DURATION   = 5
+local ROOTS_ASSET_ID        = "rbxassetid://79132435562992"
+
+-- ─── Preload roots into ReplicatedStorage ────────────────────────────────────
+
+local rootsTemplate: Model? = nil
+
+task.spawn(function()
+	local objects = game:GetObjects(ROOTS_ASSET_ID)
+	local obj     = objects and objects[1]
+	if obj then
+		obj.Name   = "LosMatteosRoots"
+		obj.Parent = ReplicatedStorage
+		rootsTemplate = obj
+	else
+		warn("[LosMatteos] Failed to load roots asset")
+	end
+end)
 
 -- ─── Wait for event ───────────────────────────────────────────────────────────
 
@@ -43,11 +60,11 @@ end
 
 -- ─── State ────────────────────────────────────────────────────────────────────
 
-local eventTrove        = Trove.new()
-local isActive          = true
-local strikesSinceHit   = 0
+local eventTrove      = Trove.new()
+local isActive        = true
+local strikesSinceHit = 0
 local recentlyTargeted: { [string]: number } = {}
-local strikeId          = 0
+local strikeId        = 0
 
 -- ─── Bolt part template ───────────────────────────────────────────────────────
 
@@ -212,17 +229,18 @@ local function runLightningStrike()
 	local rainArea = getRainArea()
 	if not rainArea then return end
 
-	local s, cf      = rainArea.Size, rainArea.CFrame
+	local s, cf       = rainArea.Size, rainArea.CFrame
 	local strikeCount = math.random(1, 2)
 
 	for i = 1, strikeCount do
-		local randomX  = math.random(-s.X / 2, s.X / 2)
-		local randomZ  = math.random(-s.Z / 2, s.Z / 2)
-		local strikePos = (cf * CFrame.new(randomX, 0, randomZ)).Position
+		local strikePos = (cf * CFrame.new(
+			math.random(-s.X / 2, s.X / 2),
+			0,
+			math.random(-s.Z / 2, s.Z / 2)
+		)).Position
 
-		local forceHit      = strikesSinceHit >= FORCE_HIT_AFTER
-		local shouldHit     = forceHit or (math.random(1, 100) <= HIT_CHANCE)
-		local targetAnimal: Model? = nil
+		local forceHit  = strikesSinceHit >= FORCE_HIT_AFTER
+		local shouldHit = forceHit or (math.random(1, 100) <= HIT_CHANCE)
 
 		if shouldHit then
 			local now = workspace:GetServerTimeNow()
@@ -245,10 +263,9 @@ local function runLightningStrike()
 
 			if #candidates > 0 then
 				table.sort(candidates, function(a, b) return a.distance < b.distance end)
-				targetAnimal = candidates[1].animal :: Model
-
-				local pp      = targetAnimal.PrimaryPart
-				local hatPos  = pp.Position + Vector3.new(0, targetAnimal:GetExtentsSize().Y * 0.5, 0)
+				local targetAnimal = candidates[1].animal :: Model
+				local pp           = targetAnimal.PrimaryPart
+				local hatPos       = pp.Position + Vector3.new(0, targetAnimal:GetExtentsSize().Y * 0.5, 0)
 
 				recentlyTargeted[targetAnimal.Name] = workspace:GetServerTimeNow()
 				strikesSinceHit = 0
@@ -264,22 +281,34 @@ local function runLightningStrike()
 			task.spawn(fireLocalLightning, strikePos, false)
 		end
 
-		if i < strikeCount then
-			task.wait(0.3)
-		end
+		if i < strikeCount then task.wait(0.3) end
 	end
 end
 
 -- ─── Roots ────────────────────────────────────────────────────────────────────
 
 local function spawnRoots()
-	local roots = EVENT_SCRIPT:FindFirstChild("Roots")
-	if not roots then
-		warn("[LosMatteos] Roots asset not found in event script")
+	-- wait for template to be ready in RS
+	local deadline = os.clock() + 10
+	while not rootsTemplate and os.clock() < deadline do
+		task.wait()
+	end
+	if not rootsTemplate then
+		warn("[LosMatteos] Roots template not ready in time")
 		return
 	end
 
-	local rootsClone = roots:Clone()
+	local rootsClone = rootsTemplate:Clone()
+
+	-- apply StartZ offset same as original
+	for _, part in rootsClone:GetDescendants() do
+		if part:IsA("BasePart") and part.Name == "RootRun" then
+			local startZ = part:GetAttribute("StartZ")
+			if startZ then
+				part:SetAttribute("StartZ", startZ - 8.5)
+			end
+		end
+	end
 
 	local mapCenterPos = MapInfo.MapCenter.Position
 	local rp = RaycastParams.new()
@@ -287,10 +316,12 @@ local function spawnRoots()
 	rp.FilterDescendantsInstances = {
 		workspace.Events["Los Matteos"]:FindFirstChild("Areas") or workspace,
 	}
-	local hit = workspace:Raycast(mapCenterPos, Vector3.new(0, -25, 0), rp)
-	local spawnPos = hit and Vector3.new(mapCenterPos.X, hit.Position.Y, mapCenterPos.Z) or mapCenterPos
+	local hit      = workspace:Raycast(mapCenterPos, Vector3.new(0, -25, 0), rp)
+	local spawnPos = hit
+		and Vector3.new(mapCenterPos.X, hit.Position.Y, mapCenterPos.Z)
+		or mapCenterPos
 
-	-- collect and sort parts by distance from center
+	-- sort parts by distance for progressive reveal
 	local partsWithDistances = {}
 	for _, desc in rootsClone:GetDescendants() do
 		if desc:IsA("BasePart") then
@@ -300,15 +331,13 @@ local function spawnRoots()
 	end
 	table.sort(partsWithDistances, function(a, b) return a.distance < b.distance end)
 
-	local minDist  = partsWithDistances[1] and partsWithDistances[1].distance or 0
-	local maxDist  = #partsWithDistances > 0 and partsWithDistances[#partsWithDistances].distance or 1
+	local minDist   = partsWithDistances[1] and partsWithDistances[1].distance or 0
+	local maxDist   = #partsWithDistances > 0 and partsWithDistances[#partsWithDistances].distance or 1
 	local distRange = math.max(maxDist - minDist, 1)
 
-	-- hide all parts initially
 	for _, entry in partsWithDistances do
 		entry.part.Parent = nil
-		local normalizedDist = (entry.distance - minDist) / distRange
-		entry.delay = normalizedDist * ROOTS_GROW_DURATION
+		entry.delay = ((entry.distance - minDist) / distRange) * ROOTS_GROW_DURATION
 	end
 
 	rootsClone.Parent = workspace
@@ -316,7 +345,6 @@ local function spawnRoots()
 
 	SoundController:PlaySound(Sounds.Roots, spawnPos, false)
 
-	-- reveal parts progressively
 	for _, entry in partsWithDistances do
 		eventTrove:Add(task.delay(entry.delay, function()
 			if rootsClone.Parent then
@@ -348,6 +376,12 @@ local function main()
 	isActive = false
 	eventTrove:Destroy()
 	table.clear(recentlyTargeted)
+
+	-- cleanup roots template from RS
+	if rootsTemplate and rootsTemplate.Parent then
+		rootsTemplate:Destroy()
+		rootsTemplate = nil
+	end
 end
 
 task.spawn(main)
