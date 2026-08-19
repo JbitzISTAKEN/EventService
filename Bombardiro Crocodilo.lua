@@ -9,13 +9,15 @@ local VFX              = require(ReplicatedStorage.Shared.VFX)
 local SoundController  = require(ReplicatedStorage.Controllers.SoundController)
 local ShakePresets     = require(ReplicatedStorage.Shared.ShakePresets)
 local Shake            = require(ReplicatedStorage.Packages.Shake)
-local EffectController = require(ReplicatedStorage.Controllers.EffectController)
+local Observers        = require(ReplicatedStorage.Packages.Observers)
+local FFlags           = require(ReplicatedStorage.Packages.FFlags)
+local GetServerType    = require(ReplicatedStorage.Shared.GetServerType)
 local EventController  = require(ReplicatedStorage.Controllers.EventController)
 
 local EVENT_NAME     = "Bombardiro Crocodilo"
 local EventAssets    = ReplicatedStorage.Controllers.EventController.Events[EVENT_NAME]
-local SvininaAsset   = EventAssets["Svinina Bombardino"]   -- drops as bomb (cloneObj)
-local CrocodiloAsset = EventAssets["Bombardiro Crocodilo"] -- plane visual (cloneObj_2)
+local cloneObj       = EventAssets["Svinina Bombardino"]   -- falling bomb
+local cloneObj_2     = EventAssets["Bombardiro Crocodilo"] -- plane visual
 local ExplosionAsset = EventAssets["ExplosionBoom"]
 local Sounds         = ReplicatedStorage.Sounds.Events[EVENT_NAME]
 
@@ -27,12 +29,17 @@ local DROP_MAX    = 10
 local BOUNCE_H    = 2
 local DRY_SPELL   = 25
 
+-- mirrors OG data_2 table: planeName → Bombardiro Crocodilo model
+local data_2 = {}
+
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
 local startedAt = EventController:GetActiveEventData(EVENT_NAME).startedAt
 
 local function timeLeftFor(t)
 	return startedAt + t - workspace:GetServerTimeNow()
 end
+
+-- ─── Shake ────────────────────────────────────────────────────────────────────
 
 local shakeBase = Shake.new()
 shakeBase.Amplitude         = 4.5
@@ -42,16 +49,7 @@ shakeBase.FadeOutTime       = 0.6
 shakeBase.PositionInfluence = Vector3.new(0.5, 0.5, 0.5)
 shakeBase.RotationInfluence = Vector3.new(2.5, 0.5, 0.5)
 
-local trove            = Trove.new()
-local recentlyHit      = {}
-local planeModels      = {} -- [plane.Name] = Bombardiro Crocodilo model
-local lastTraitApplied = os.clock()
-
-local WanderFolder = workspace:WaitForChild("Events"):WaitForChild("Wander")
-
--- ─── Helpers ──────────────────────────────────────────────────────────────────
-
-local function shakeCameraBasedOnProximity(pos)
+local function shakeCameraBasedOnProximity(pos: Vector3)
 	local mag = (workspace.CurrentCamera.CFrame.Position - pos).Magnitude
 	if mag > 300 then return end
 	local s  = shakeBase:Clone()
@@ -61,6 +59,17 @@ local function shakeCameraBasedOnProximity(pos)
 	ShakePresets.BindShakeToCamera(s)
 	s:Start()
 end
+
+-- ─── Trove + state ────────────────────────────────────────────────────────────
+
+local managedObj       = Trove.new()
+local lastTraitApplied = os.clock()
+local activePlanes     = {} -- ordered list for BulkMoveTo
+local recentlyHit      = {}
+
+-- ─── Wander ───────────────────────────────────────────────────────────────────
+
+local WanderFolder = workspace:WaitForChild("Events"):WaitForChild("Wander")
 
 local function getRandomWanderPosition(): Vector3
 	local parts = WanderFolder:GetChildren()
@@ -82,6 +91,8 @@ local function getGroundY(): number
 	return p.Position.Y + p.Size.Y / 2
 end
 
+-- ─── Helpers ──────────────────────────────────────────────────────────────────
+
 local function hasExplosive(animal: Model): boolean
 	local json = animal:GetAttribute("Traits")
 	if not json then return false end
@@ -91,13 +102,6 @@ local function hasExplosive(animal: Model): boolean
 		if t == "Explosive" then return true end
 	end
 	return false
-end
-
-local function pruneRecents()
-	local now = workspace:GetServerTimeNow()
-	for name, t in pairs(recentlyHit) do
-		if now - t > 15 then recentlyHit[name] = nil end
-	end
 end
 
 local function findValidAnimalTarget(): Model?
@@ -115,6 +119,26 @@ local function isDrySpell(): boolean
 	return (os.clock() - lastTraitApplied) >= DRY_SPELL
 end
 
+-- ─── Explosion — mirrors OG playExplosion exactly ─────────────────────────────
+
+local function playExplosion(cframe: CFrame)
+	local explosion = ExplosionAsset:Clone()
+	explosion.CFrame = cframe
+	explosion.Parent = workspace
+
+	local explosionSound = Sounds:FindFirstChild("BombHit")
+	if explosionSound then
+		local soundClone = explosionSound:Clone()
+		soundClone.Parent = explosion
+		soundClone:Play()
+	end
+
+	VFX.emit(explosion)
+	task.delay(5, function()
+		explosion:Destroy()
+	end)
+end
+
 -- ─── Plane hitbox ─────────────────────────────────────────────────────────────
 
 local function createPlaneHitbox(): BasePart
@@ -125,7 +149,9 @@ local function createPlaneHitbox(): BasePart
 	plane.CanCollide   = false
 	plane.Anchored     = true
 	plane.CFrame       = CFrame.new(getRandomWanderPosition())
-	plane.Parent       = workspace
+	-- tag drives the Observers.observeTag below — mirrors OG exactly
+	CollectionService:AddTag(plane, "BombardiroPlane")
+	plane.Parent = workspace
 	return plane
 end
 
@@ -163,30 +189,32 @@ local function flyPlane(plane: BasePart)
 	end
 end
 
--- ─── Bomb drop — Svinina Bombardino falls, 1:1 with original client ───────────
+-- ─── Bomb drop — mirrors OG OnClientEvent SpawnBomb handler exactly ───────────
 
 local function dropBomb(plane: BasePart)
 	local dropPos   = Vector3.new(plane.Position.X, plane.Position.Y - plane.Size.Y / 2 - 1, plane.Position.Z)
 	local groundY   = getGroundY()
 	local impactPos = Vector3.new(dropPos.X, groundY, dropPos.Z)
 
-	-- flash Crocodilo body on the plane briefly (mirrors original OnClientEvent behavior)
-	local croco = planeModels[plane.Name]
-	if croco then
+	-- hide Svinina on the Crocodilo model briefly — mirrors OG SpawnBomb handler
+	local croco = data_2[plane.Name]
+	if croco and croco:FindFirstChild("Svinina Bombardino") then
 		for _, child in croco["Svinina Bombardino"]:GetChildren() do
-			if child.Name ~= "RootPart" and child:IsA("BasePart") then
+			if child.Name ~= "RootPart" then
 				child.Transparency = 1
-				task.delay(1, function() child.Transparency = 0 end)
+				task.delay(1, function()
+					child.Transparency = 0
+				end)
 			end
 		end
 	end
 
-	-- Svinina Bombardino is the falling bomb — matches cloneObj in original
-	local bomb = SvininaAsset:Clone()
+	-- falling Svinina Bombardino — matches cloneObj in OG
+	local bomb = cloneObj:Clone()
 	bomb.PrimaryPart.Anchored = true
 	bomb:PivotTo(CFrame.new(dropPos))
 	bomb.Parent = workspace
-	trove:Add(bomb)
+	managedObj:Add(bomb)
 
 	local dropSound = Sounds.DroppingBomb:Clone()
 	dropSound.Parent = bomb.PrimaryPart
@@ -196,15 +224,16 @@ local function dropBomb(plane: BasePart)
 	local fallTime = MathUtils.calculateTimeToGround(dropPos.Y, groundY)
 
 	local conn
-	conn = trove:Add(RunService.PostSimulation:Connect(function(dt)
-		debug.profilebegin("Bombardiro:Bomb")
+	conn = managedObj:Add(RunService.PostSimulation:Connect(function(dt)
+		debug.profilebegin("Bombardiro Crocodilo:Bomb")
 		elapsed = elapsed + dt
 		bomb:PivotTo(
 			CFrame.new(dropPos - vector.create(0, MathUtils.simulateGravity(elapsed), 0))
 			* CFrame.Angles(-elapsed * math.pi * 2, 0, 0)
 		)
 		if elapsed / fallTime >= 1 then
-			trove:Remove(conn)
+			conn:Disconnect()
+			managedObj:Remove(conn)
 			conn = nil
 
 			for _, d in bomb:GetDescendants() do
@@ -214,28 +243,20 @@ local function dropBomb(plane: BasePart)
 					d:Destroy()
 				end
 			end
-			task.delay(3, function() trove:Remove(bomb) end)
+			task.delay(3, function()
+				managedObj:Remove(bomb)
+			end)
 
-			-- explosion
-			local explosion = ExplosionAsset:Clone()
-			explosion.CFrame  = CFrame.new(impactPos)
-			explosion.Parent  = workspace
-			VFX.emit(explosion)
-			task.delay(5, function() explosion:Destroy() end)
-
-			local hitSound = Sounds:FindFirstChild("BombHit")
-			if hitSound then
-				SoundController:PlaySound(hitSound, impactPos, false)
-			end
-
+			-- explosion — mirrors OG Explode handler
+			playExplosion(CFrame.new(impactPos))
 			shakeCameraBasedOnProximity(impactPos)
 
-			-- apply explosive trait client-side
+			-- apply Explosive trait client-side
 			for _, animal in ipairs(CollectionService:GetTagged("Animal")) do
 				if animal.PrimaryPart and animal.Parent then
-					local apos = animal.PrimaryPart.Position
-					local dist2d = Vector3.new(apos.X, 0, apos.Z) - Vector3.new(impactPos.X, 0, impactPos.Z)
-					if dist2d.Magnitude <= 15 and not hasExplosive(animal) then
+					local apos   = animal.PrimaryPart.Position
+					local dist2d = (Vector3.new(apos.X, 0, apos.Z) - Vector3.new(impactPos.X, 0, impactPos.Z)).Magnitude
+					if dist2d <= 15 and not hasExplosive(animal) then
 						local traits = {}
 						local tj = animal:GetAttribute("Traits")
 						if tj then
@@ -258,7 +279,6 @@ local function bombLoop(plane: BasePart)
 		task.wait(math.random(DROP_MIN, DROP_MAX))
 		if not EventController:GetActiveEventData(EVENT_NAME) or not plane.Parent then break end
 
-		-- dry spell: steer toward a valid animal first
 		if isDrySpell() then
 			local target = findValidAnimalTarget()
 			if target and target.PrimaryPart then
@@ -272,16 +292,14 @@ local function bombLoop(plane: BasePart)
 	end
 end
 
--- ─── Sync Crocodilo model to plane hitbox every frame ────────────────────────
+-- ─── BulkMoveTo — mirrors OG PreRender handler exactly ───────────────────────
 
-local activePlanes = {} -- ordered list for BulkMoveTo
-
-trove:Add(RunService.PreRender:Connect(function()
-	debug.profilebegin("Bombardiro:BulkMoveTo")
+managedObj:Add(RunService.PreRender:Connect(function()
+	debug.profilebegin("Bombardiro Crocodilo:BulkMoveTo")
 	local parts  = {}
 	local frames = {}
 	for _, plane in ipairs(activePlanes) do
-		local model = planeModels[plane.Name]
+		local model = data_2[plane.Name]
 		if plane.Parent and model and model.Parent then
 			table.insert(parts,  model.PrimaryPart)
 			table.insert(frames, plane.CFrame)
@@ -293,23 +311,39 @@ trove:Add(RunService.PreRender:Connect(function()
 	debug.profileend()
 end))
 
--- ─── Spawn plane ──────────────────────────────────────────────────────────────
+-- ─── observeTag("BombardiroPlane") — mirrors OG observer exactly ──────────────
 
-local function spawnPlane()
-	local plane = createPlaneHitbox()
-	trove:Add(plane)
-
-	-- Bombardiro Crocodilo model is the plane visual — matches cloneObj_2
-	-- starts with Svinina Bombardino children hidden for 5s (mirrors original observer)
-	local croco = CrocodiloAsset:Clone()
+managedObj:Add(Observers.observeTag("BombardiroPlane", function(plane: BasePart)
+	local croco = cloneObj_2:Clone()
 	croco.PrimaryPart.Anchored = true
+
+	-- hide Svinina children for 5s — mirrors OG exactly
 	for _, child in croco["Svinina Bombardino"]:GetChildren() do
 		if child.Name ~= "RootPart" then
 			child.Transparency = 1
 		end
 	end
+
+	-- FFlags optimization — mirrors OG exactly
+	if FFlags:GetInstant("Optimisation.HumanoidBrainrotModels") or GetServerType:IsPublicServer() then
+		local AnimationController = croco:FindFirstChild("AnimationController")
+		if AnimationController then
+			AnimationController:Destroy()
+		end
+		local humanoid = Instance.new("Humanoid", croco)
+		local animator = Instance.new("Animator", humanoid)
+		humanoid.Name                 = "AnimationController"
+		humanoid.EvaluateStateMachine = false
+		humanoid.DisplayDistanceType  = Enum.HumanoidDisplayDistanceType.None
+		humanoid.PlatformStand        = true
+		humanoid.Parent               = croco
+	end
+
 	croco.Parent = workspace
-	task.delay(5, function()
+	data_2[plane.Name] = croco
+	table.insert(activePlanes, plane)
+
+	local revealThread = task.delay(5, function()
 		if croco.Parent then
 			for _, child in croco["Svinina Bombardino"]:GetChildren() do
 				if child.Name ~= "RootPart" then
@@ -319,18 +353,29 @@ local function spawnPlane()
 		end
 	end)
 
-	planeModels[plane.Name] = croco
-	table.insert(activePlanes, plane)
-
-	trove:Add(croco)
-	trove:Add(function()
-		planeModels[plane.Name] = nil
+	return function()
 		local idx = table.find(activePlanes, plane)
 		if idx then table.remove(activePlanes, idx) end
+		data_2[plane.Name] = nil
+		croco:Destroy()
+		if coroutine.status(revealThread) == "suspended" then
+			pcall(task.cancel, revealThread)
+		end
+	end
+end))
+
+-- ─── Spawn plane ──────────────────────────────────────────────────────────────
+
+local function spawnPlane()
+	local plane = createPlaneHitbox()
+	managedObj:Add(plane)
+
+	managedObj:Add(function()
+		CollectionService:RemoveTag(plane, "BombardiroPlane")
 	end)
 
-	trove:Add(task.spawn(function() flyPlane(plane) end))
-	trove:Add(task.spawn(function() bombLoop(plane) end))
+	managedObj:Add(task.spawn(function() flyPlane(plane) end))
+	managedObj:Add(task.spawn(function() bombLoop(plane) end))
 end
 
 -- ─── Entry ────────────────────────────────────────────────────────────────────
@@ -349,10 +394,10 @@ local function loop()
 		task.wait(1)
 	end
 
-	trove:Destroy()
-	recentlyHit  = {}
-	planeModels  = {}
+	managedObj:Destroy()
+	data_2      = {}
 	activePlanes = {}
+	recentlyHit  = {}
 end
 
 task.spawn(loop)
