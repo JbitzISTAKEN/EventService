@@ -2,17 +2,22 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 local HttpService       = game:GetService("HttpService")
 
-local Trove         = require(ReplicatedStorage.Packages.Trove)
+if not game:IsLoaded() then game.Loaded:Wait() end
+
+local Trove           = require(ReplicatedStorage.Packages.Trove)
 local EventController = require(ReplicatedStorage.Controllers.EventController)
 
-local EVENT_NAME   = "Easter"
-local TAG_NAME     = "EasterEventBunny"
-local TRAIT_NAME   = "Bunny Ears"
+local EVENT_NAME  = "Easter"
+local TAG_NAME    = "EasterEventBunny"
+local TRAIT_NAME  = "Bunny Ears"
 
-local WANDER_FOLDER   = workspace:WaitForChild("Events"):WaitForChild("Wander")
-local TOTAL_BUNNIES   = math.random(6, 10)
-local HOP_SPEED       = 18
-local BUNNY_SCALE     = 1
+local WANDER_FOLDER = workspace:WaitForChild("Events"):WaitForChild("Wander")
+
+-- ─── Constants ────────────────────────────────────────────────────────────────
+
+local TOTAL_BUNNIES       = math.random(6, 10)
+local HOP_SPEED           = 18
+local BUNNY_SCALE         = 1
 
 local ATTACK_COOLDOWN_MIN = 6
 local ATTACK_COOLDOWN_MAX = 10
@@ -24,7 +29,13 @@ local RETIRE_WAIT         = 2
 local WANDER_INTERVAL     = 2.5
 local WANDER_CHANCE       = 0.65
 
+-- ─── Wait for event ───────────────────────────────────────────────────────────
+
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
+local eventData = EventController:GetActiveEventData(EVENT_NAME)
+local startedAt = eventData.startedAt
+
+-- ─── State ────────────────────────────────────────────────────────────────────
 
 local eventTrove     = Trove.new()
 local spawnedBunnies = {}
@@ -100,13 +111,13 @@ local function createBunny(position: Vector3): Model
 	model:SetAttribute("Jumping", false)
 
 	local anchor = Instance.new("Part")
-	anchor.Name        = "AnchorPart"
-	anchor.Size        = Vector3.new(1, 1, 1)
+	anchor.Name         = "AnchorPart"
+	anchor.Size         = Vector3.new(1, 1, 1)
 	anchor.Transparency = 1
-	anchor.CanCollide  = false
-	anchor.Anchored    = true
-	anchor.CFrame      = CFrame.new(position)
-	anchor.Parent      = model
+	anchor.CanCollide   = false
+	anchor.Anchored     = true
+	anchor.CFrame       = CFrame.new(position)
+	anchor.Parent       = model
 
 	model.PrimaryPart = anchor
 	CollectionService:AddTag(anchor, TAG_NAME)
@@ -114,9 +125,7 @@ local function createBunny(position: Vector3): Model
 	return model
 end
 
--- ─── Behavior ─────────────────────────────────────────────────────────────────
-
-local spawnBunny -- forward decl
+-- ─── Wander ───────────────────────────────────────────────────────────────────
 
 local function wander(bunny)
 	if not bunny.Model or not bunny.Model.Parent then return end
@@ -162,6 +171,10 @@ local function wander(bunny)
 	end))
 end
 
+-- ─── Retire + respawn ─────────────────────────────────────────────────────────
+
+local spawnBunny
+
 local function retireAndRespawn(bunny)
 	removeFromList(bunny)
 
@@ -173,6 +186,8 @@ local function retireAndRespawn(bunny)
 		if wp then spawnBunny(wp) end
 	end))
 end
+
+-- ─── Jump + give trait ────────────────────────────────────────────────────────
 
 local function jumpAndGiveTrait(bunny, targetAnimal: Model)
 	if not bunny.Model or not bunny.Model.Parent then return end
@@ -267,12 +282,33 @@ end
 -- ─── Main ─────────────────────────────────────────────────────────────────────
 
 local function main()
+	local elapsed   = workspace:GetServerTimeNow() - startedAt
+	local remaining = math.max(0, 0 - elapsed)
+	if remaining > 0 then task.wait(remaining) end
+	if not isActive then return end
+
 	for _ = 1, TOTAL_BUNNIES do
 		local wp = getRandomWanderPart()
 		if wp then spawnBunny(wp) end
 	end
 
-	-- wander tick
+	if #spawnedBunnies == 0 then
+		warn("[Easter] No wander parts found")
+		return
+	end
+
+	-- Live animal cache
+	local cachedAnimals = CollectionService:GetTagged("Animal")
+	eventTrove:Add(CollectionService:GetInstanceAddedSignal("Animal"):Connect(function(inst)
+		table.insert(cachedAnimals, inst)
+	end))
+	eventTrove:Add(CollectionService:GetInstanceRemovedSignal("Animal"):Connect(function(inst)
+		for i = #cachedAnimals, 1, -1 do
+			if cachedAnimals[i] == inst then table.remove(cachedAnimals, i) break end
+		end
+	end))
+
+	-- Wander tick
 	eventTrove:Add(task.spawn(function()
 		while isActive do
 			task.wait(WANDER_INTERVAL)
@@ -288,14 +324,14 @@ local function main()
 		end
 	end))
 
-	-- attack tick
+	-- Attack tick
 	eventTrove:Add(task.spawn(function()
 		while isActive do
 			task.wait(math.random(ATTACK_COOLDOWN_MIN, ATTACK_COOLDOWN_MAX))
 			if not isActive or #spawnedBunnies == 0 then break end
 
 			local candidates = {}
-			for _, animal in ipairs(CollectionService:GetTagged("Animal")) do
+			for _, animal in ipairs(cachedAnimals) do
 				if animal.PrimaryPart and not animalHasTrait(animal) then
 					table.insert(candidates, animal)
 				end
@@ -317,8 +353,8 @@ local function main()
 		end
 	end))
 
-	while EventController:GetActiveEventData(EVENT_NAME) do task.wait() end
-
+	-- Cleanup watchdog
+	while EventController:GetActiveEventData(EVENT_NAME) do task.wait(1) end
 	isActive = false
 	eventTrove:Destroy()
 	table.clear(spawnedBunnies)
