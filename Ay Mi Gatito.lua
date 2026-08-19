@@ -37,14 +37,8 @@ local ATTACK_LOOP_MAX    = 10
 
 -- ─── Asset resolution ─────────────────────────────────────────────────────────
 
-local GATITOS_FOLDER = EVENT_SCRIPT:WaitForChild("Gatitos")
-local burstAsset     = EVENT_SCRIPT:WaitForChild("Burst")
-
-local animDance1  = EVENT_SCRIPT:WaitForChild("GatitoDance1")
-local animDance2  = EVENT_SCRIPT:WaitForChild("GatitoDance2_")
-local animWalk    = EVENT_SCRIPT:WaitForChild("GatitoWalk")
-local animIdle    = EVENT_SCRIPT:WaitForChild("GatitoIdle")
-local animAttack  = EVENT_SCRIPT:WaitForChild("GatitoAttack")
+local burstAsset = EVENT_SCRIPT:WaitForChild("Burst")
+local animAttack = EVENT_SCRIPT:WaitForChild("GatitoAttack")
 
 -- ─── Wander folder injection ──────────────────────────────────────────────────
 
@@ -82,9 +76,9 @@ local DEFAULT_REACH_THRESHOLD = 1.5
 local DEFAULT_TURN_SPEED      = 8
 
 local groundRayParams = RaycastParams.new()
-groundRayParams.FilterType               = Enum.RaycastFilterType.Include
+groundRayParams.FilterType                 = Enum.RaycastFilterType.Include
 groundRayParams.FilterDescendantsInstances = {}
-groundRayParams.IgnoreWater              = true
+groundRayParams.IgnoreWater                = true
 
 local function addWalkable(inst)
     if not inst or not inst:IsA("BasePart") or walkableSet[inst] then return end
@@ -106,6 +100,11 @@ for _, tag in ipairs(WALKABLE_TAGS) do
     for _, inst in ipairs(CollectionService:GetTagged(tag)) do addWalkable(inst) end
     CollectionService:GetInstanceAddedSignal(tag):Connect(addWalkable)
     CollectionService:GetInstanceRemovedSignal(tag):Connect(removeWalkable)
+end
+
+-- Gate: don't spawn until ground exists to raycast against
+if #walkableParts == 0 then
+    repeat task.wait() until #walkableParts > 0
 end
 
 local function refreshGroundFilter()
@@ -131,8 +130,8 @@ local function smoothTurn(model, newPos, flatDir, dt, turnSpeed)
     end
     flatDir = flatDir.Unit
     if not isModelValid(model) then return end
-    local pp         = model.PrimaryPart
-    local targetCF   = CFrame.new(newPos, newPos + flatDir)
+    local pp       = model.PrimaryPart
+    local targetCF = CFrame.new(newPos, newPos + flatDir)
     local currentRot = CFrame.new(newPos)
         * CFrame.fromMatrix(Vector3.zero, pp.CFrame.RightVector, Vector3.new(0, 1, 0))
     local alpha = math.min(1, turnSpeed * dt)
@@ -199,7 +198,7 @@ local function npcMoveTo(model, targetPos, speed, opts)
             if shouldStop and shouldStop() then return false end
             if not isModelValid(model) then return false end
             if os.clock() - startClock > maxTime then return false end
-            local pp      = model.PrimaryPart
+            local pp = model.PrimaryPart
             if not pp then return false end
             local toWp    = wp - pp.Position
             local flatVec = Vector3.new(toWp.X, 0, toWp.Z)
@@ -300,19 +299,6 @@ local function hasBlockingTrait(animal: Model): boolean
     return set[BLOCKING_TRAIT] == true
 end
 
-local function calcAnimSpeed(elapsed: number): number
-    if elapsed < 7 then return 0 end
-    if elapsed >= 222.313 then
-        return math.max(0, 1 - (elapsed - 222.313) / 3)
-    end
-    local phase = (elapsed - 7) % 72.771
-    if phase >= 43   and phase < 48   then return 0.4 end
-    if phase >= 48   and phase < 50   then return (phase - 48) / 2 * 0.3 + 0.4 end
-    if phase >= 50   and phase < 55.5 then return 0.7 end
-    if phase >= 55.5 and phase < 57   then return (phase - 55.5) / 1.5 * 0.3 + 0.7 end
-    return 1
-end
-
 -- ─── Burst ────────────────────────────────────────────────────────────────────
 
 local function doBurst(target: Model)
@@ -322,77 +308,11 @@ local function doBurst(target: Model)
     })
 end
 
--- ─── Animation controller ─────────────────────────────────────────────────────
+-- ─── Model creation — root + attributes + tag only ───────────────────────────
+-- initGatitoObserver (decompiled client script) owns mesh, rig, animator, and
+-- all animation tracks. Adding the tag here is the only signal it needs.
 
-local function buildAnimController(
-    rootModel : Model,
-    animator  : Animator,
-    trove     : typeof(Trove.new())
-)
-    local function loadTrack(animObj, looped, priority)
-        if not animObj then return nil end
-        local track    = animator:LoadAnimation(animObj)
-        track.Looped   = looped
-        track.Priority = priority
-        trove:Add(function() track:Stop(0) track:Destroy() end)
-        return track
-    end
-
-    local danceTrack  = loadTrack(animDance1, true,  Enum.AnimationPriority.Action)
-    local dance2Track = loadTrack(animDance2, true,  Enum.AnimationPriority.Action)
-    local walkTrack   = loadTrack(animWalk,   false, Enum.AnimationPriority.Action2)
-    local idleTrack   = loadTrack(animIdle,   true,  Enum.AnimationPriority.Idle)
-
-    local function syncState()
-        local running = rootModel:GetAttribute("IsRunning")
-        local chasing = rootModel:GetAttribute("IsChasing")
-        local dancing = rootModel:GetAttribute("Dance")
-
-        if running or chasing then
-            if walkTrack   and not walkTrack.IsPlaying   then walkTrack:Play()    end
-            if danceTrack  and danceTrack.IsPlaying       then danceTrack:Stop()   end
-            if dance2Track and dance2Track.IsPlaying      then dance2Track:Stop()  end
-            if idleTrack   and idleTrack.IsPlaying        then idleTrack:Stop()    end
-        elseif dancing then
-            if danceTrack  and not danceTrack.IsPlaying  then danceTrack:Play()   end
-            if dance2Track and dance2Track.IsPlaying      then dance2Track:Stop()  end
-            if walkTrack   and walkTrack.IsPlaying        then walkTrack:Stop()    end
-            if idleTrack   and idleTrack.IsPlaying        then idleTrack:Stop()    end
-        else
-            if idleTrack   and not idleTrack.IsPlaying   then idleTrack:Play()    end
-            if danceTrack  and danceTrack.IsPlaying       then danceTrack:Stop()   end
-            if dance2Track and dance2Track.IsPlaying      then dance2Track:Stop()  end
-            if walkTrack   and walkTrack.IsPlaying        then walkTrack:Stop()    end
-        end
-    end
-
-    trove:Add(rootModel:GetAttributeChangedSignal("IsRunning"):Connect(syncState))
-    trove:Add(rootModel:GetAttributeChangedSignal("IsChasing"):Connect(syncState))
-    trove:Add(rootModel:GetAttributeChangedSignal("Dance"):Connect(syncState))
-
-    trove:Add(rootModel:GetAttributeChangedSignal("AttackAnimation"):Connect(function()
-        if not rootModel:GetAttribute("AttackAnimation") then return end
-        local attackTrack      = animator:LoadAnimation(animAttack)
-        attackTrack.Looped     = false
-        attackTrack.Priority   = Enum.AnimationPriority.Action4
-        attackTrack:Play()
-        attackTrack.Stopped:Once(function() attackTrack:Destroy() end)
-    end))
-
-    trove:Add(RunService.PostSimulation:Connect(function()
-        local speed = calcAnimSpeed(workspace:GetServerTimeNow() - startedAt)
-        if danceTrack  and danceTrack.IsPlaying  then danceTrack:AdjustSpeed(speed)  end
-        if dance2Track and dance2Track.IsPlaying then dance2Track:AdjustSpeed(speed) end
-        if walkTrack   and walkTrack.IsPlaying   then walkTrack:AdjustSpeed(speed)   end
-        if idleTrack   and idleTrack.IsPlaying   then idleTrack:AdjustSpeed(speed)   end
-    end))
-
-    syncState()
-end
-
--- ─── Model creation ───────────────────────────────────────────────────────────
-
-local function createGatito(position: Vector3): (Model, Animator?)
+local function createGatito(position: Vector3): Model
     local model = Instance.new("Model")
     model.Name  = "Gatito"
 
@@ -414,43 +334,13 @@ local function createGatito(position: Vector3): (Model, Animator?)
     model:SetAttribute("IsChasing",       false)
     model:SetAttribute("AttackAnimation", false)
 
+    -- Tag fires initGatitoObserver — it clones mesh, builds rig, loads tracks.
+    -- Do NOT touch GATITOS_FOLDER or Animator here.
     CollectionService:AddTag(model, TAG_NAME)
     variantIndex = (variantIndex % totalOptions) + 1
 
-    local animator: Animator? = nil
-
-    local templateName = chosenVariant or "Gatito"
-    local template     = GATITOS_FOLDER:FindFirstChild(templateName)
-                      or GATITOS_FOLDER:FindFirstChild("Gatito")
-
-    if template then
-        local mesh = template:Clone()
-
-        local existingAC = mesh:FindFirstChild("AnimationController")
-        if existingAC then existingAC:Destroy() end
-
-        -- Exact rig from decompiled initGatitoObserver
-        local humanoid = Instance.new("Humanoid")
-        humanoid.Name                 = "AnimationController"
-        humanoid.EvaluateStateMachine = false
-        humanoid.DisplayDistanceType  = Enum.HumanoidDisplayDistanceType.None
-        humanoid.PlatformStand        = true
-        humanoid.Parent               = mesh
-
-        local animatorInst  = Instance.new("Animator")
-        animatorInst.Parent = humanoid
-        animator            = animatorInst
-
-        local weld    = Instance.new("Weld")
-        weld.Part0    = mesh.PrimaryPart
-        weld.Part1    = root
-        weld.Parent   = mesh.PrimaryPart
-
-        mesh.Parent = model
-    end
-
     model.Parent = workspace
-    return model, animator
+    return model
 end
 
 -- ─── Wander ───────────────────────────────────────────────────────────────────
@@ -509,11 +399,7 @@ local function followAndAttackAnimal(gatitoData, targetAnimal: Model)
             CHASE_SPEED,
             CHASE_REACH_DIST,
             30,
-            {
-                shouldStop = function()
-                    return not isActive or not gatito.Parent
-                end,
-            }
+            { shouldStop = function() return not isActive or not gatito.Parent end }
         )
 
         gatito:SetAttribute("IsRunning", false)
@@ -570,13 +456,9 @@ end
 
 local function spawnGatito(homePart: BasePart)
     if not isActive then return end
-    local pos             = randomPointInPart(homePart)
-    local model, animator = createGatito(pos)
-    local gatitoTrove     = eventTrove:Extend()
+    local model     = createGatito(randomPointInPart(homePart))
+    local gatitoTrove = eventTrove:Extend()
     gatitoTrove:Add(model)
-    if animator then
-        buildAnimController(model, animator, gatitoTrove)
-    end
     table.insert(spawnedEntities, {
         Model = model,
         Home  = homePart,
