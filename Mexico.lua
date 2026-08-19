@@ -1,3 +1,4 @@
+if not game:IsLoaded() then game.Loaded:Wait() end
 
 local ReplicatedStorage  = game:GetService("ReplicatedStorage")
 local CollectionService  = game:GetService("CollectionService")
@@ -5,10 +6,9 @@ local HttpService        = game:GetService("HttpService")
 local RunService         = game:GetService("RunService")
 local Players            = game:GetService("Players")
 
-if not game:IsLoaded() then game.Loaded:Wait() end
-
 local Trove           = require(ReplicatedStorage.Packages.Trove)
 local EventController = require(ReplicatedStorage.Controllers.EventController)
+local ClientEventUtils = require(ReplicatedStorage.Controllers.EventController.ClientEventUtils)
 
 local NpcPathfinding = loadstring(game:HttpGet(
     "https://raw.githubusercontent.com/JbitzISTAKEN/EventService/refs/heads/main/NPCPathfinding.lua"
@@ -33,7 +33,13 @@ local RECENT_PLAYER_COOLDOWN     = 30
 local WANDER_FOLDER = workspace:WaitForChild("Events"):WaitForChild("Wander")
 local instruments   = { "Violin", "Maracas", "Trumpet" }
 
--- ─── Sombrero — preload into ReplicatedStorage (mirrors roots pattern) ────────
+local EVENT_SCRIPT = ReplicatedStorage
+    :WaitForChild("Controllers")
+    :WaitForChild("EventController")
+    :WaitForChild("Events")
+    :WaitForChild("Mexico")
+
+-- ─── Sombrero — preload into ReplicatedStorage ────────────────────────────────
 
 local sombreroTemplate = nil
 
@@ -109,6 +115,15 @@ local function giveSombrero(animal)
     animal:SetAttribute("Traits", HttpService:JSONEncode(traits))
 end
 
+local function doBurst(targetAnimal)
+    if not targetAnimal or not targetAnimal.PrimaryPart then return end
+    ClientEventUtils.playBurst(
+        EVENT_SCRIPT.Burst,
+        targetAnimal.PrimaryPart.Position,
+        { ReplicatedStorage.Sounds.Events.Mexico.Hit }
+    )
+end
+
 -- ─── Roach model ──────────────────────────────────────────────────────────────
 
 local function createRoach(position)
@@ -143,8 +158,8 @@ local function spawnRoaches()
         if not wanderPart:IsA("BasePart") then continue end
         local count = math.random(1, 3)
         for _ = 1, count do
-            local pos           = getRandomWanderPos(wanderPart)
-            local model, instr  = createRoach(pos)
+            local pos          = getRandomWanderPos(wanderPart)
+            local model, instr = createRoach(pos)
             eventTrove:Add(model)
             model.Parent = workspace
             table.insert(spawnedRoaches, {
@@ -227,7 +242,7 @@ local function followAndAttack(roachData, targetAnimal)
 
         roach:SetAttribute("IsRunning", false)
 
-        if reached and targetAnimal and targetAnimal.Parent then
+        if reached and targetAnimal and targetAnimal.Parent and targetAnimal.PrimaryPart then
             roach:SetAttribute("Dance",           true)
             roach:SetAttribute("Instrument",      "Sombrero")
             roach:SetAttribute("AttackAnimation", (roach:GetAttribute("AttackAnimation") or 0) + 1)
@@ -244,9 +259,9 @@ local function followAndAttack(roachData, targetAnimal)
                 local diff   = tgtPos - myPos
                 local dist   = diff.Magnitude
                 if dist <= 1.5 then break end
-                local dt     = task.wait()
-                local dir    = diff.Unit
-                local flat   = Vector3.new(dir.X, 0, dir.Z)
+                local dt = task.wait()
+                local dir = diff.Unit
+                local flat = Vector3.new(dir.X, 0, dir.Z)
                 if flat.Magnitude > 1e-4 then
                     flat = flat.Unit
                     local newPos = stickToGround(myPos + dir * math.min(ROACH_SPEED * dt, dist))
@@ -281,25 +296,33 @@ local function followAndAttack(roachData, targetAnimal)
                 task.wait()
             end
 
+            -- burst effect
+            doBurst(targetAnimal)
+
             -- give sombrero
             local player = Players:GetPlayerFromCharacter(targetAnimal)
             if player then
-                -- player hit: clone sombrero from ReplicatedStorage
+                -- player: Accessory via AddAccessory
                 if sombreroTemplate and not targetAnimal:FindFirstChild("SombreroHat") then
-                    local hat  = sombreroTemplate:Clone()
-                    hat.Name   = "SombreroHat"
-                    hat.Parent = targetAnimal
+                    local humanoid = targetAnimal:FindFirstChildOfClass("Humanoid")
+                    if humanoid then
+                        local hat  = sombreroTemplate:Clone()
+                        hat.Name   = "SombreroHat"
+                        humanoid:AddAccessory(hat)
+                    end
                 end
             else
-                -- animal hit
+                -- animal: traits
                 giveSombrero(targetAnimal)
             end
 
             roach:SetAttribute("Instrument", originalInstrument)
             task.wait(1)
+        else
+            -- chase timed out or target gone — clear attack state so roach isn't permanently locked
+            roach:SetAttribute("Instrument", originalInstrument)
         end
 
-        roach:SetAttribute("Instrument", originalInstrument)
         activeAttacks[attackId] = nil
         roachData.IsAttacking   = false
         attackTrove:Destroy()
@@ -312,7 +335,7 @@ local function main()
     spawnRoaches()
     startSombreroCleanup()
 
-    -- shuffle pause window (28.5 → 34.5 seconds)
+    -- shuffle pause window (28.5 → 34.5)
     eventTrove:Add(task.delay(
         math.max(startedAt + 28.5 - workspace:GetServerTimeNow(), 0),
         function()
