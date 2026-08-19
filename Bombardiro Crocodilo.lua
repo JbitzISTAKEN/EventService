@@ -263,7 +263,7 @@ local function dropBomb(plane: BasePart)
 				end
 			end
 		end
-		debug.profileend()
+		pcall(debug.profileend) -- guarded: fires even when conn disconnects mid-frame
 	end))
 end
 
@@ -301,7 +301,7 @@ managedObj:Add(RunService.PreRender:Connect(function()
 	if #parts > 0 then
 		workspace:BulkMoveTo(parts, frames, Enum.BulkMoveMode.FireCFrameChanged)
 	end
-	debug.profileend()
+	pcall(debug.profileend) -- guarded: executor profiler overhead won't bleed in
 end))
 
 -- ─── observeTag ───────────────────────────────────────────────────────────────
