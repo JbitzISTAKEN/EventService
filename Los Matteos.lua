@@ -473,15 +473,6 @@ local function spawnRoots()
 
 	local rootsClone = rootsTemplate:Clone()
 
-	for _, part in rootsClone:GetDescendants() do
-		if part:IsA("BasePart") and part.Name == "RootRun" then
-			local startZ = part:GetAttribute("StartZ")
-			if startZ then
-				part:SetAttribute("StartZ", startZ - 8.5)
-			end
-		end
-	end
-
 	local mapCenterPos = MapInfo.MapCenter.Position
 	local rp = RaycastParams.new()
 	rp.FilterType = Enum.RaycastFilterType.Include
