@@ -10,6 +10,8 @@ local Trove            = require(ReplicatedStorage.Packages.Trove)
 local EventController  = require(ReplicatedStorage.Controllers.EventController)
 local ClientEventUtils = require(ReplicatedStorage.Controllers.EventController.ClientEventUtils)
 
+local NpcPathfinding = loadstring(game:HttpGet("https://raw.githubusercontent.com/JbitzISTAKEN/EventService/refs/heads/main/NPCPathfinding.lua"))()
+
 local EVENT_NAME   = "Ay Mi Gatito"
 local TAG_NAME     = "Gatito"
 local EVENT_SCRIPT = ReplicatedStorage:WaitForChild("Controllers")
@@ -66,213 +68,6 @@ local lockedTargets   = {}
 local isActive        = true
 local rng             = Random.new()
 
--- ─── NpcPathfinding (inlined) ─────────────────────────────────────────────────
-
-local WALKABLE_TAGS           = { "Ground", "Carpet" }
-local walkableParts           = {}
-local walkableSet             = {}
-local filterDirty             = true
-local DEFAULT_REACH_THRESHOLD = 1.5
-local DEFAULT_TURN_SPEED      = 8
-
-local groundRayParams = RaycastParams.new()
-groundRayParams.FilterType                 = Enum.RaycastFilterType.Include
-groundRayParams.FilterDescendantsInstances = {}
-groundRayParams.IgnoreWater                = true
-
-local function addWalkable(inst)
-    if not inst or not inst:IsA("BasePart") or walkableSet[inst] then return end
-    walkableSet[inst] = true
-    table.insert(walkableParts, inst)
-    filterDirty = true
-end
-
-local function removeWalkable(inst)
-    if not inst or not walkableSet[inst] then return end
-    walkableSet[inst] = nil
-    for i = #walkableParts, 1, -1 do
-        if walkableParts[i] == inst then table.remove(walkableParts, i) break end
-    end
-    filterDirty = true
-end
-
-for _, tag in ipairs(WALKABLE_TAGS) do
-    for _, inst in ipairs(CollectionService:GetTagged(tag)) do addWalkable(inst) end
-    CollectionService:GetInstanceAddedSignal(tag):Connect(addWalkable)
-    CollectionService:GetInstanceRemovedSignal(tag):Connect(removeWalkable)
-end
-
--- Gate: don't spawn until ground exists to raycast against
-if #walkableParts == 0 then
-    repeat task.wait() until #walkableParts > 0
-end
-
-local function refreshGroundFilter()
-    if filterDirty then
-        groundRayParams.FilterDescendantsInstances = walkableParts
-        filterDirty = false
-    end
-end
-
-local function isModelValid(model): boolean
-    return model ~= nil
-        and model.Parent ~= nil
-        and model.PrimaryPart ~= nil
-        and model.PrimaryPart.Parent ~= nil
-end
-
-local function smoothTurn(model, newPos, flatDir, dt, turnSpeed)
-    if not isModelValid(model) or not newPos or not flatDir or dt <= 0 then return end
-    if flatDir.Magnitude < 1e-4 then
-        local look = model.PrimaryPart.CFrame.LookVector
-        flatDir = Vector3.new(look.X, 0, look.Z)
-        if flatDir.Magnitude < 1e-4 then flatDir = Vector3.new(0, 0, 1) end
-    end
-    flatDir = flatDir.Unit
-    if not isModelValid(model) then return end
-    local pp       = model.PrimaryPart
-    local targetCF = CFrame.new(newPos, newPos + flatDir)
-    local currentRot = CFrame.new(newPos)
-        * CFrame.fromMatrix(Vector3.zero, pp.CFrame.RightVector, Vector3.new(0, 1, 0))
-    local alpha = math.min(1, turnSpeed * dt)
-    if not isModelValid(model) then return end
-    local ok, err = pcall(function() model:PivotTo(currentRot:Lerp(targetCF, alpha)) end)
-    if not ok then warn("[NpcPathfinding] smoothTurn failed:", err) end
-end
-
-local function stickToGround(position, yOffset, castUp, castDown)
-    if not position then return Vector3.new(0, 0, 0) end
-    local up   = castUp   or 10
-    local down = castDown or 50
-    local off  = yOffset  or 1.5
-    refreshGroundFilter()
-    if #walkableParts == 0 then return position end
-    local ok, result = pcall(function()
-        return workspace:Raycast(
-            position + Vector3.new(0, up, 0),
-            Vector3.new(0, -(up + down), 0),
-            groundRayParams
-        )
-    end)
-    if ok and result then return result.Position + Vector3.new(0, off, 0) end
-    return position
-end
-
-local DEFAULT_AGENT_PARAMS = {
-    AgentRadius     = 2,
-    AgentHeight     = 5,
-    AgentCanJump    = false,
-    AgentCanClimb   = false,
-    WaypointSpacing = 4,
-}
-
-local function computePath(startPos, endPos, agentParams)
-    if not startPos or not endPos then return nil end
-    local path = PathfindingService:CreatePath(agentParams or DEFAULT_AGENT_PARAMS)
-    if not path then return nil end
-    local ok = pcall(function() path:ComputeAsync(startPos, endPos) end)
-    if not ok or path.Status ~= Enum.PathStatus.Success then return nil end
-    local waypoints = path:GetWaypoints()
-    if not waypoints or #waypoints == 0 then return nil end
-    local result = table.create(#waypoints)
-    for i = 2, #waypoints do
-        local wp = waypoints[i]
-        if wp and wp.Position then table.insert(result, stickToGround(wp.Position)) end
-    end
-    if #result == 0 then table.insert(result, stickToGround(endPos)) end
-    return result
-end
-
-local function npcMoveTo(model, targetPos, speed, opts)
-    if not isModelValid(model) or not targetPos or not speed or speed <= 0 then return false end
-    opts = opts or {}
-    local maxTime    = opts.maxTime or 30
-    local threshold  = opts.reachThreshold or DEFAULT_REACH_THRESHOLD
-    local shouldStop = opts.shouldStop
-    local waypoints  = computePath(model.PrimaryPart.Position, targetPos)
-    if not waypoints or #waypoints == 0 then return false end
-    local startClock = os.clock()
-    for _, wp in ipairs(waypoints) do
-        if not wp then continue end
-        while true do
-            if shouldStop and shouldStop() then return false end
-            if not isModelValid(model) then return false end
-            if os.clock() - startClock > maxTime then return false end
-            local pp = model.PrimaryPart
-            if not pp then return false end
-            local toWp    = wp - pp.Position
-            local flatVec = Vector3.new(toWp.X, 0, toWp.Z)
-            if flatVec.Magnitude <= threshold then break end
-            local dt = RunService.Heartbeat:Wait()
-            if dt <= 0 then continue end
-            if not isModelValid(model) then return false end
-            local pp2     = model.PrimaryPart
-            if not pp2 then return false end
-            local flatDir = flatVec.Unit
-            local newPos  = stickToGround(pp2.Position + flatDir * math.min(speed * dt, flatVec.Magnitude))
-            smoothTurn(model, newPos, flatDir, dt, DEFAULT_TURN_SPEED)
-        end
-    end
-    return isModelValid(model)
-end
-
-local function npcChase(model, getTargetPos, speed, stopDistance, maxTime, opts)
-    if not isModelValid(model) or not getTargetPos or not speed or speed <= 0 then return false end
-    stopDistance = stopDistance or 3
-    maxTime      = maxTime      or 30
-    opts         = opts         or {}
-    local shouldStop     = opts.shouldStop
-    local repathInterval = 0.6
-    local moveRepath     = 5
-    local startClock     = os.clock()
-    local lastRepath     = -math.huge
-    local lastTargetPos  = nil
-    local waypoints      = nil
-    local wpIndex        = 1
-    while true do
-        if shouldStop and shouldStop() then return false end
-        if not isModelValid(model) then return false end
-        if os.clock() - startClock > maxTime then return false end
-        local targetPos = getTargetPos()
-        if not targetPos then return false end
-        local pp = model.PrimaryPart
-        if not pp then return false end
-        if (targetPos - pp.Position).Magnitude <= stopDistance then return true end
-        local now        = os.clock()
-        local needRepath = not waypoints
-            or wpIndex > #waypoints
-            or now - lastRepath >= repathInterval
-            or (lastTargetPos and (targetPos - lastTargetPos).Magnitude >= moveRepath)
-        if needRepath then
-            if not isModelValid(model) then return false end
-            local pp2 = model.PrimaryPart
-            if not pp2 then return false end
-            waypoints     = computePath(pp2.Position, targetPos)
-            wpIndex       = 1
-            lastRepath    = now
-            lastTargetPos = targetPos
-            if not waypoints or #waypoints == 0 then task.wait(0.1) continue end
-        end
-        if not waypoints or wpIndex > #waypoints then continue end
-        local wp = waypoints[wpIndex]
-        if not wp then wpIndex += 1 continue end
-        if not isModelValid(model) then return false end
-        local pp3     = model.PrimaryPart
-        if not pp3 then return false end
-        local toWp    = wp - pp3.Position
-        local flatVec = Vector3.new(toWp.X, 0, toWp.Z)
-        if flatVec.Magnitude <= DEFAULT_REACH_THRESHOLD then wpIndex += 1 continue end
-        local dt = RunService.Heartbeat:Wait()
-        if dt <= 0 then continue end
-        if not isModelValid(model) then return false end
-        local pp4 = model.PrimaryPart
-        if not pp4 then return false end
-        local flatDir = flatVec.Unit
-        local newPos  = stickToGround(pp4.Position + flatDir * math.min(speed * dt, flatVec.Magnitude))
-        smoothTurn(model, newPos, flatDir, dt, DEFAULT_TURN_SPEED)
-    end
-end
-
 -- ─── Helpers ──────────────────────────────────────────────────────────────────
 
 local function randomPointInPart(part: BasePart): Vector3
@@ -308,9 +103,7 @@ local function doBurst(target: Model)
     })
 end
 
--- ─── Model creation — root + attributes + tag only ───────────────────────────
--- initGatitoObserver (decompiled client script) owns mesh, rig, animator, and
--- all animation tracks. Adding the tag here is the only signal it needs.
+-- ─── Model creation ───────────────────────────────────────────────────────────
 
 local function createGatito(position: Vector3): Model
     local model = Instance.new("Model")
@@ -322,7 +115,7 @@ local function createGatito(position: Vector3): Model
     root.Transparency = 1
     root.Anchored     = true
     root.CanCollide   = false
-    root.CFrame       = CFrame.new(stickToGround(position))
+    root.CFrame       = CFrame.new(NpcPathfinding.stickToGround(position))
     root.Parent       = model
     model.PrimaryPart = root
 
@@ -334,8 +127,6 @@ local function createGatito(position: Vector3): Model
     model:SetAttribute("IsChasing",       false)
     model:SetAttribute("AttackAnimation", false)
 
-    -- Tag fires initGatitoObserver — it clones mesh, builds rig, loads tracks.
-    -- Do NOT touch GATITOS_FOLDER or Animator here.
     CollectionService:AddTag(model, TAG_NAME)
     variantIndex = (variantIndex % totalOptions) + 1
 
@@ -351,7 +142,7 @@ local function wander(hunterData)
     if not entity or not entity.PrimaryPart then return end
     if entity:GetAttribute("IsChasing") or entity:GetAttribute("IsRunning") then return end
 
-    local targetPos = stickToGround(randomPointInPart(homePart))
+    local targetPos = NpcPathfinding.stickToGround(randomPointInPart(homePart))
     local distance  = (targetPos - entity:GetPivot().Position).Magnitude
     if distance < 1 then return end
 
@@ -359,7 +150,7 @@ local function wander(hunterData)
 
     local wanderTrove = eventTrove:Extend()
     wanderTrove:Add(task.spawn(function()
-        npcMoveTo(entity, targetPos, WANDER_SPEED, {
+        NpcPathfinding.moveTo(entity, targetPos, WANDER_SPEED, {
             maxTime = math.max(5, distance / WANDER_SPEED + 2),
             shouldStop = function()
                 return not isActive
@@ -388,7 +179,7 @@ local function followAndAttackAnimal(gatitoData, targetAnimal: Model)
 
     local chaseTrove = eventTrove:Extend()
     chaseTrove:Add(task.spawn(function()
-        local reached = npcChase(
+        local reached = NpcPathfinding.chase(
             gatito,
             function()
                 if targetAnimal and targetAnimal.Parent and targetAnimal.PrimaryPart then
@@ -405,6 +196,7 @@ local function followAndAttackAnimal(gatitoData, targetAnimal: Model)
         gatito:SetAttribute("IsRunning", false)
 
         if reached and targetAnimal and targetAnimal.Parent and targetAnimal.PrimaryPart then
+            -- FIX: set true first, let the observer react, then manage the attack tick ourselves
             gatito:SetAttribute("AttackAnimation", true)
 
             local elapsed    = 0
@@ -420,7 +212,7 @@ local function followAndAttackAnimal(gatitoData, targetAnimal: Model)
                 if delta.Magnitude > CHASE_STICK_DIST then
                     local flat = Vector3.new(delta.X, 0, delta.Z)
                     if flat.Magnitude < 1e-4 then return end
-                    local newPos = stickToGround(mPos + delta.Unit * math.min(CHASE_SPEED * dt, delta.Magnitude))
+                    local newPos = NpcPathfinding.stickToGround(mPos + delta.Unit * math.min(CHASE_SPEED * dt, delta.Magnitude))
                     gatito:PivotTo(CFrame.new(newPos, newPos + flat.Unit))
                 end
             end)
@@ -429,6 +221,7 @@ local function followAndAttackAnimal(gatitoData, targetAnimal: Model)
             attackConn:Disconnect()
 
             doBurst(targetAnimal)
+            -- FIX: clear AFTER burst, not before — observer guard below prevents double-load
             gatito:SetAttribute("AttackAnimation", false)
 
             if targetAnimal and targetAnimal.Parent then
@@ -456,7 +249,7 @@ end
 
 local function spawnGatito(homePart: BasePart)
     if not isActive then return end
-    local model     = createGatito(randomPointInPart(homePart))
+    local model       = createGatito(randomPointInPart(homePart))
     local gatitoTrove = eventTrove:Extend()
     gatitoTrove:Add(model)
     table.insert(spawnedEntities, {
