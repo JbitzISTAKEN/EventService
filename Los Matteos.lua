@@ -32,7 +32,7 @@ local HIT_CHANCE            = 5
 local RETARGET_COOLDOWN     = 15
 local ROOTS_START_DELAY     = 7
 local ROOTS_GROW_DURATION   = 5
-local ROOTS_ASSET_ID        = "rbxassetid://79132435562992"
+local ROOTS_ASSET_ID        = "rbxassetid://103628309756671"
 local CLOUD_STRIKE_RADIUS   = 100
 local CLOUD_STRIKE_COLOR    = Color3.fromRGB(90, 109, 161)
 
@@ -49,10 +49,10 @@ task.spawn(function()
 	local objects = game:GetObjects(ROOTS_ASSET_ID)
 	local obj     = objects and objects[1]
 	if obj then
-		obj.Name   = "LosMatteosRoots"
-		obj.Parent = ReplicatedStorage
-		rootsTemplate = obj
-	else
+	obj.Name   = "Roots"
+	obj.Parent = ReplicatedStorage
+	rootsTemplate = obj
+		else
 		warn("[LosMatteos] Failed to load roots asset")
 	end
 end)
