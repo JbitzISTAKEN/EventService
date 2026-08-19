@@ -1,3 +1,4 @@
+
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 local HttpService       = game:GetService("HttpService")
@@ -288,7 +289,6 @@ end
 -- ─── Roots ────────────────────────────────────────────────────────────────────
 
 local function spawnRoots()
-	-- wait for template to be ready in RS
 	local deadline = os.clock() + 10
 	while not rootsTemplate and os.clock() < deadline do
 		task.wait()
@@ -300,7 +300,6 @@ local function spawnRoots()
 
 	local rootsClone = rootsTemplate:Clone()
 
-	-- apply StartZ offset same as original
 	for _, part in rootsClone:GetDescendants() do
 		if part:IsA("BasePart") and part.Name == "RootRun" then
 			local startZ = part:GetAttribute("StartZ")
@@ -321,7 +320,6 @@ local function spawnRoots()
 		and Vector3.new(mapCenterPos.X, hit.Position.Y, mapCenterPos.Z)
 		or mapCenterPos
 
-	-- sort parts by distance for progressive reveal
 	local partsWithDistances = {}
 	for _, desc in rootsClone:GetDescendants() do
 		if desc:IsA("BasePart") then
@@ -352,6 +350,14 @@ local function spawnRoots()
 			end
 		end))
 	end
+
+	-- stop roots sound exactly when the last part lands
+	eventTrove:Add(task.delay(ROOTS_GROW_DURATION, function()
+		if isActive then
+			local rootsSound = Sounds:FindFirstChild("Roots")
+			if rootsSound then rootsSound:Stop() end
+		end
+	end))
 end
 
 -- ─── Main ─────────────────────────────────────────────────────────────────────
@@ -377,7 +383,6 @@ local function main()
 	eventTrove:Destroy()
 	table.clear(recentlyTargeted)
 
-	-- cleanup roots template from RS
 	if rootsTemplate and rootsTemplate.Parent then
 		rootsTemplate:Destroy()
 		rootsTemplate = nil
