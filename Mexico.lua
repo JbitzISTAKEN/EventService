@@ -1,11 +1,10 @@
+if not game:IsLoaded() then game.Loaded:Wait() end
 
 local ReplicatedStorage  = game:GetService("ReplicatedStorage")
 local CollectionService  = game:GetService("CollectionService")
 local HttpService        = game:GetService("HttpService")
 local RunService         = game:GetService("RunService")
 local Players            = game:GetService("Players")
-
-if not game:IsLoaded() then game.Loaded:Wait() end
 
 local Trove           = require(ReplicatedStorage.Packages.Trove)
 local EventController = require(ReplicatedStorage.Controllers.EventController)
@@ -15,11 +14,9 @@ local NpcPathfinding = loadstring(game:HttpGet(
     "https://raw.githubusercontent.com/JbitzISTAKEN/EventService/refs/heads/main/NPCPathfinding.lua"
 ))()
 
--- ─── Constants ────────────────────────────────────────────────────────────────
-
-local EVENT_NAME  = "Mexico"
-local ROACH_SPEED = 30
-local ROACH_Y_OFFSET = 5
+local EVENT_NAME       = "Mexico"
+local ROACH_SPEED      = 30
+local ROACH_Y_OFFSET   = 5
 local PUT_HAT_DURATION = 0.5
 
 local ATTACK_COOLDOWN_MIN        = 5
@@ -40,24 +37,17 @@ local EVENT_SCRIPT = ReplicatedStorage
     :WaitForChild("Events")
     :WaitForChild("Mexico")
 
--- ─── Wait for event ───────────────────────────────────────────────────────────
-
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
 local eventData = EventController:GetActiveEventData(EVENT_NAME)
 local startedAt = eventData.startedAt
 
--- ─── State ────────────────────────────────────────────────────────────────────
-
 local eventTrove              = Trove.new()
 local spawnedRoaches          = {}
 local activeAttacks           = {}
--- keyed by Instance reference, not name
-local recentlyTargeted        = {}   -- [animal_instance] = serverTime
-local recentlyTargetedPlayers = {}   -- [player_instance]  = serverTime
+local recentlyTargeted        = {}
+local recentlyTargetedPlayers = {}
 local isActive                = true
 local isPaused                = false
-
--- ─── Helpers ──────────────────────────────────────────────────────────────────
 
 local function stickToGround(position)
     return NpcPathfinding.stickToGround(position, ROACH_Y_OFFSET)
@@ -101,8 +91,6 @@ local function giveSombrero(animal)
     animal:SetAttribute("Traits", HttpService:JSONEncode(traits))
 end
 
--- burst fires exactly like ClientEventUtils.playBurst expects —
--- position from PrimaryPart, sound table from EVENT_SCRIPT
 local function doBurst(targetModel)
     if not targetModel or not targetModel.PrimaryPart then return end
     ClientEventUtils.playBurst(
@@ -112,37 +100,32 @@ local function doBurst(targetModel)
     )
 end
 
--- hat weld: matches the working snippet exactly, no AddAccessory
 local function weldSombreroToHead(character)
     local head = character:FindFirstChild("Head")
     if not head then return end
-
-    -- already has one
     if character:FindFirstChild("SombreroHat") then return end
 
-    local objects = game:GetObjects("rbxassetid://99466679730663")
-    local acc     = objects and objects[1]
-    if not acc then
-        warn("[Mexico] sombrero asset failed to load")
-        return
-    end
+    task.spawn(function()
+        local ok, objects = pcall(game.GetObjects, game, "rbxassetid://99466679730663")
+        if not ok or not objects or not objects[1] then
+            warn("[Mexico] GetObjects failed: " .. tostring(objects))
+            return
+        end
 
-    local handle = acc:FindFirstChild("Handle")
-    if not handle then return end
+        local a = objects[1]
+        local h = a.Handle
+        h.CanCollide = false
+        h.Massless   = true
+        a.Name       = "SombreroHat"
+        a.Parent     = character
 
-    handle.CanCollide = false
-    handle.Massless   = true
-    acc.Name          = "SombreroHat"
-    acc.Parent        = character
-
-    local w   = Instance.new("Weld", handle)
-    w.Part0   = head
-    w.Part1   = handle
-    w.C0      = head:FindFirstChild("HatAttachment") and head.HatAttachment.CFrame or CFrame.new(0, 0.6, 0)
-    w.C1      = handle:FindFirstChild("HatAttachment") and handle.HatAttachment.CFrame or CFrame.identity
+        local w  = Instance.new("Weld", h)
+        w.Part0  = head
+        w.Part1  = h
+        w.C0     = head.HatAttachment.CFrame
+        w.C1     = h.HatAttachment.CFrame
+    end)
 end
-
--- ─── Roach model ──────────────────────────────────────────────────────────────
 
 local function createRoach(position)
     local model = Instance.new("Model")
@@ -169,8 +152,6 @@ local function createRoach(position)
     return model, instrument
 end
 
--- ─── Spawn ────────────────────────────────────────────────────────────────────
-
 local function spawnRoaches()
     for _, wanderPart in ipairs(WANDER_FOLDER:GetChildren()) do
         if not wanderPart:IsA("BasePart") then continue end
@@ -190,8 +171,6 @@ local function spawnRoaches()
         end
     end
 end
-
--- ─── Sombrero cleanup ─────────────────────────────────────────────────────────
 
 local function startSombreroCleanup()
     eventTrove:Add(task.spawn(function()
@@ -215,8 +194,6 @@ local function startSombreroCleanup()
     end))
 end
 
--- ─── Attack ───────────────────────────────────────────────────────────────────
-
 local function followAndAttack(roachData, targetModel, isPlayer)
     local roach = roachData.Model
     if not roach or not roach.Parent then return end
@@ -233,8 +210,8 @@ local function followAndAttack(roachData, targetModel, isPlayer)
     end
 
     roach:SetAttribute("Instrument", "Sombrero")
-    roach:SetAttribute("IsRunning",  true)
     roach:SetAttribute("Dance",      true)
+    roach:SetAttribute("IsRunning",  true)
 
     local attackTrove = eventTrove:Extend()
 
@@ -315,22 +292,29 @@ local function followAndAttack(roachData, targetModel, isPlayer)
                 task.wait()
             end
 
-            -- burst fires on the model, position pulled from PrimaryPart
-            doBurst(targetModel)
-
             if isPlayer then
-                -- player: weld via the working snippet
-                weldSombreroToHead(targetModel)
+                -- server: HasSombreroHat already set in tick before chase,
+                -- check it here before applying hat, matching server guard
+                local player = Players:GetPlayerFromCharacter(targetModel)
+                if player and player:GetAttribute("HasSombreroHat") == true then
+                    weldSombreroToHead(targetModel)
+                    doBurst(targetModel)
+                end
             else
-                -- animal: traits attribute
+                -- server order: giveSombrero → Burst:FireAllClients
                 giveSombrero(targetModel)
+                doBurst(targetModel)
             end
 
             roach:SetAttribute("Instrument", originalInstrument)
+            roach:SetAttribute("Dance",      true)
+            roach:SetAttribute("IsRunning",  false)
+
             task.wait(1)
         else
-            -- timed out or target gone — don't permanently lock the roach
             roach:SetAttribute("Instrument", originalInstrument)
+            roach:SetAttribute("Dance",      true)
+            roach:SetAttribute("IsRunning",  false)
         end
 
         activeAttacks[attackId] = nil
@@ -339,13 +323,10 @@ local function followAndAttack(roachData, targetModel, isPlayer)
     end))
 end
 
--- ─── Main ─────────────────────────────────────────────────────────────────────
-
 local function main()
     spawnRoaches()
     startSombreroCleanup()
 
-    -- shuffle pause window (28.5 → 34.5)
     eventTrove:Add(task.delay(
         math.max(startedAt + 28.5 - workspace:GetServerTimeNow(), 0),
         function()
@@ -383,7 +364,6 @@ local function main()
         end
     ))
 
-    -- wander tick
     eventTrove:Add(task.spawn(function()
         while isActive do
             task.wait(1)
@@ -412,7 +392,8 @@ local function main()
         end
     end))
 
-    -- animal attack tick — keyed by instance reference, not name
+    -- animal attack tick — single random pick, retry up to #spawnedRoaches
+    -- times matching server behavior of random grab + IsAttacking guard
     eventTrove:Add(task.spawn(function()
         while isActive do
             task.wait(math.random(ATTACK_COOLDOWN_MIN, ATTACK_COOLDOWN_MAX))
@@ -422,8 +403,6 @@ local function main()
             end
 
             local now = workspace:GetServerTimeNow()
-
-            -- expire by instance key
             for inst, t in pairs(recentlyTargeted) do
                 if (now - t) > RECENT_ANIMAL_COOLDOWN then recentlyTargeted[inst] = nil end
             end
@@ -431,7 +410,7 @@ local function main()
             local candidates = {}
             for _, animal in ipairs(CollectionService:GetTagged("Animal")) do
                 if animal.PrimaryPart
-                    and not recentlyTargeted[animal]        -- instance key, no name collision
+                    and not recentlyTargeted[animal]
                     and not animalHasSombrero(animal)
                 then
                     table.insert(candidates, animal)
@@ -439,22 +418,26 @@ local function main()
             end
             if #candidates == 0 then continue end
 
-            local target    = candidates[math.random(1, #candidates)]
+            -- mirror server: random pick, retry until free roach found
             local freeRoach = nil
-            for _, rd in ipairs(spawnedRoaches) do
+            local attempts  = #spawnedRoaches
+            while attempts > 0 do
+                local rd = spawnedRoaches[math.random(1, #spawnedRoaches)]
                 if not rd.IsAttacking and rd.Model and rd.Model.Parent then
                     freeRoach = rd
                     break
                 end
+                attempts -= 1
             end
             if not freeRoach then continue end
 
+            local target = candidates[math.random(1, #candidates)]
             recentlyTargeted[target] = now
             followAndAttack(freeRoach, target, false)
         end
     end))
 
-    -- player attack tick — keyed by player instance
+    -- player attack tick
     eventTrove:Add(task.spawn(function()
         while isActive do
             task.wait(math.random(PLAYER_ATTACK_COOLDOWN_MIN, PLAYER_ATTACK_COOLDOWN_MAX))
@@ -464,7 +447,6 @@ local function main()
             end
 
             local now = workspace:GetServerTimeNow()
-
             for inst, t in pairs(recentlyTargetedPlayers) do
                 if (now - t) > RECENT_PLAYER_COOLDOWN then recentlyTargetedPlayers[inst] = nil end
             end
@@ -472,7 +454,6 @@ local function main()
             local candidates = {}
             for _, player in ipairs(Players:GetPlayers()) do
                 local char = player.Character
-                -- check character for existing hat, not a player attribute
                 if char
                     and char:FindFirstChild("HumanoidRootPart")
                     and not char:FindFirstChild("SombreroHat")
@@ -483,23 +464,26 @@ local function main()
             end
             if #candidates == 0 then continue end
 
-            local selected  = candidates[math.random(1, #candidates)]
             local freeRoach = nil
-            for _, rd in ipairs(spawnedRoaches) do
+            local attempts  = #spawnedRoaches
+            while attempts > 0 do
+                local rd = spawnedRoaches[math.random(1, #spawnedRoaches)]
                 if not rd.IsAttacking and rd.Model and rd.Model.Parent then
                     freeRoach = rd
                     break
                 end
+                attempts -= 1
             end
             if not freeRoach then continue end
 
+            local selected = candidates[math.random(1, #candidates)]
             recentlyTargetedPlayers[selected] = now
-            -- hat is placed on confirmed hit inside followAndAttack, not before
+            -- set attribute before chase, matching server tick order
+            selected:SetAttribute("HasSombreroHat", true)
             followAndAttack(freeRoach, selected.Character, true)
         end
     end))
 
-    -- shutdown watchdog
     while EventController:GetActiveEventData(EVENT_NAME) do task.wait(1) end
 
     isActive                = false
