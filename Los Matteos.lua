@@ -21,7 +21,11 @@ local MapInfo         = require(ReplicatedStorage.Shared.MapInformation)
 local EVENT_NAME  = "Los Matteos"
 local TRAIT_NAME  = "Matteo Hat"
 
-local EVENT_SCRIPT = ReplicatedStorage.Controllers.EventController.Events["Los Matteos"]
+local EVENT_SCRIPT = ReplicatedStorage:WaitForChild("Controllers")
+	:WaitForChild("EventController")
+	:WaitForChild("Events")
+	:WaitForChild("Los Matteos")
+
 local Sounds       = ReplicatedStorage.Sounds.Events["Los Matteos"]
 
 -- ─── Constants ────────────────────────────────────────────────────────────────
