@@ -11,6 +11,7 @@ local Shake            = require(ReplicatedStorage.Packages.Shake)
 local Observers        = require(ReplicatedStorage.Packages.Observers)
 local FFlags           = require(ReplicatedStorage.Packages.FFlags)
 local EventController  = require(ReplicatedStorage.Controllers.EventController)
+local SoundController  = require(ReplicatedStorage.Controllers.SoundController)
 
 -- ─── Server type ──────────────────────────────────────────────────────────────
 
@@ -121,19 +122,14 @@ local function isDrySpell(): boolean
 	return (os.clock() - lastTraitApplied) >= DRY_SPELL
 end
 
--- ─── Explosion — 1:1 sound logic ─────────────────────────────────────────────
+-- ─── Explosion ────────────────────────────────────────────────────────────────
 
 local function playExplosion(cframe: CFrame)
 	local explosion = ExplosionAsset:Clone()
 	explosion.CFrame = cframe
 	explosion.Parent = workspace
 
-	local explosionSound = Sounds:FindFirstChild("BombHit")
-	if explosionSound then
-		local soundClone = explosionSound:Clone()
-		soundClone.Parent = explosion
-		soundClone:Play()
-	end
+	SoundController:PlaySound(Sounds.BombHit, cframe.Position)
 
 	VFX.emit(explosion)
 	task.delay(5, function()
@@ -190,7 +186,7 @@ local function flyPlane(plane: BasePart)
 	end
 end
 
--- ─── Bomb drop — 1:1 sound logic ─────────────────────────────────────────────
+-- ─── Bomb drop ────────────────────────────────────────────────────────────────
 
 local function dropBomb(plane: BasePart)
 	local dropPos   = Vector3.new(plane.Position.X, plane.Position.Y - plane.Size.Y / 2 - 1, plane.Position.Z)
@@ -215,7 +211,6 @@ local function dropBomb(plane: BasePart)
 	bomb.Parent = workspace
 	managedObj:Add(bomb)
 
-	-- 1:1 DroppingBomb — cloned onto bomb PrimaryPart, plays immediately
 	local dropSound = Sounds.DroppingBomb:Clone()
 	dropSound.Parent = bomb.PrimaryPart
 	dropSound:Play()
@@ -247,7 +242,6 @@ local function dropBomb(plane: BasePart)
 				managedObj:Remove(bomb)
 			end)
 
-			-- 1:1 explosion + BombHit sound inside playExplosion
 			playExplosion(CFrame.new(impactPos))
 			shakeCameraBasedOnProximity(impactPos)
 
@@ -310,7 +304,7 @@ managedObj:Add(RunService.PreRender:Connect(function()
 	debug.profileend()
 end))
 
--- ─── observeTag — StandardServer swapped in for IsPublicServer ───────────────
+-- ─── observeTag ───────────────────────────────────────────────────────────────
 
 managedObj:Add(Observers.observeTag("BombardiroPlane", function(plane: BasePart)
 	local croco = cloneObj_2:Clone()
