@@ -11,6 +11,8 @@ local Trove            = require(ReplicatedStorage.Packages.Trove)
 local Spr              = require(ReplicatedStorage.Packages.Spr)
 local VFX              = require(ReplicatedStorage.Shared.VFX)
 
+-- ─── Constants ────────────────────────────────────────────────────────────────
+
 local EVENT_NAME       = "Witching Hour"
 local WITCH_HAT_TRAIT  = "Witch Hat"
 local PROJECTILE_SPEED = 50
@@ -19,9 +21,16 @@ local COOLDOWN_TIME    = 15
 local ATTACK_MIN       = 6
 local ATTACK_MAX       = 12
 
+-- ─── Asset resolution ─────────────────────────────────────────────────────────
+
 local EventFolder = ReplicatedStorage.Controllers.EventController.Events["Witching Hour"]
 
+-- ─── Wait for event ───────────────────────────────────────────────────────────
+
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
+local eventData = EventController:GetActiveEventData(EVENT_NAME)
+
+-- ─── State ────────────────────────────────────────────────────────────────────
 
 local eventTrove       = Trove.new()
 local isActive         = true
@@ -32,6 +41,8 @@ local witchModel = workspace:WaitForChild("Events")
     :WaitForChild("Model")
 
 witchModel:PivotTo(CFrame.new(-381.109, -9.5, -4.494))
+
+-- ─── Helpers ──────────────────────────────────────────────────────────────────
 
 local function getTraits(animal: Model): ({string}, {[string]: boolean})
     local json = animal:GetAttribute("Traits")
@@ -48,6 +59,8 @@ local function hasWitchHat(animal: Model): boolean
     return set[WITCH_HAT_TRAIT] == true
 end
 
+-- ─── Trait grant ──────────────────────────────────────────────────────────────
+
 local function grantWitchHat(animal: Model)
     if not animal or not animal.Parent then return end
     local traits, set = getTraits(animal)
@@ -55,6 +68,8 @@ local function grantWitchHat(animal: Model)
     table.insert(traits, WITCH_HAT_TRAIT)
     animal:SetAttribute("Traits", HttpService:JSONEncode(traits))
 end
+
+-- ─── Burst ────────────────────────────────────────────────────────────────────
 
 local function doBurst(animal: Model)
     local animalData = AnimalController:GetAnimals()[animal.Name]
@@ -87,6 +102,8 @@ local function doBurst(animal: Model)
     task.delay(5, function() burst:Destroy() end)
 end
 
+-- ─── Projectile ───────────────────────────────────────────────────────────────
+
 local function fireProjectile(
     targetAnimal   : Model,
     startServerTime: number,
@@ -109,7 +126,6 @@ local function fireProjectile(
     local appeared      = false
     local conn: RBXScriptConnection
 
-    -- 1:1 from doc 5: flightEnd = initialDelay + startTime + travelTime
     local flightEnd     = startServerTime + INITIAL_DELAY + travelTime
     local clampedSpread = math.min(candidateCount * 0.5, 50)
 
@@ -126,7 +142,6 @@ local function fireProjectile(
     conn = RunService.PreRender:Connect(function()
         local now       = workspace:GetServerTimeNow()
         local remaining = math.max(flightEnd - now, 0)
-        -- 1:1 from doc 5: t = now < (startTime + initialDelay) and 0 or 1 - remaining / travelTime
         local t = now < (startServerTime + INITIAL_DELAY)
             and 0
             or 1 - remaining / travelTime
@@ -191,54 +206,60 @@ local function fireProjectile(
     eventTrove:Add(conn)
 end
 
-eventTrove:Add(task.spawn(function()
-    while isActive do
-        task.wait(math.random(ATTACK_MIN * 10, ATTACK_MAX * 10) / 10)
-        if not isActive then break end
+-- ─── Main ─────────────────────────────────────────────────────────────────────
 
-        local now = workspace:GetServerTimeNow()
-        for name, lastTime in pairs(recentlyTargeted) do
-            if (now - lastTime) > COOLDOWN_TIME then
-                recentlyTargeted[name] = nil
+local function main()
+    -- Attack loop
+    eventTrove:Add(task.spawn(function()
+        while isActive do
+            task.wait(math.random(ATTACK_MIN * 10, ATTACK_MAX * 10) / 10)
+            if not isActive then break end
+
+            local now = workspace:GetServerTimeNow()
+            for name, lastTime in pairs(recentlyTargeted) do
+                if (now - lastTime) > COOLDOWN_TIME then
+                    recentlyTargeted[name] = nil
+                end
             end
-        end
 
-        local candidates = {}
-        for _, animal in ipairs(CollectionService:GetTagged("Animal")) do
-            if animal.PrimaryPart
-                and not recentlyTargeted[animal.Name]
-                and not hasWitchHat(animal)
-            then
-                table.insert(candidates, animal)
+            local candidates = {}
+            for _, animal in ipairs(CollectionService:GetTagged("Animal")) do
+                if animal.PrimaryPart
+                    and not recentlyTargeted[animal.Name]
+                    and not hasWitchHat(animal)
+                then
+                    table.insert(candidates, animal)
+                end
             end
+
+            if #candidates == 0 then continue end
+
+            local selected   = candidates[math.random(1, #candidates)]
+            local witchPos   = witchModel:GetPivot().Position
+            local animalPos  = selected.PrimaryPart.Position
+            local distance   = (witchPos - animalPos).Magnitude
+            local travelTime = math.clamp(distance / PROJECTILE_SPEED, 0.5, 4)
+            local fireTime   = workspace:GetServerTimeNow()
+            local totalWait  = travelTime + INITIAL_DELAY
+
+            recentlyTargeted[selected.Name] = fireTime
+
+            fireProjectile(selected, fireTime, travelTime, #candidates)
+
+            task.delay(totalWait, function()
+                if not isActive or not selected.Parent then return end
+                doBurst(selected)
+                grantWitchHat(selected)
+            end)
         end
+    end))
 
-        if #candidates == 0 then continue end
-
-        local selected   = candidates[math.random(1, #candidates)]
-        local witchPos   = witchModel:GetPivot().Position
-        local animalPos  = selected.PrimaryPart.Position
-        local distance   = (witchPos - animalPos).Magnitude
-        local travelTime = math.clamp(distance / PROJECTILE_SPEED, 0.5, 4)
-        local fireTime   = workspace:GetServerTimeNow()
-        local totalWait  = travelTime + INITIAL_DELAY
-
-        recentlyTargeted[selected.Name] = fireTime
-
-        fireProjectile(selected, fireTime, travelTime, #candidates)
-
-        task.delay(totalWait, function()
-            if not isActive or not selected.Parent then return end
-            doBurst(selected)
-            grantWitchHat(selected)
-        end)
-    end
-end))
-
-task.spawn(function()
+    -- Cleanup watchdog
     while EventController:GetActiveEventData(EVENT_NAME) do task.wait(1) end
     isActive = false
     witchModel:PivotTo(CFrame.new(0, 100000, 0))
     eventTrove:Destroy()
     table.clear(recentlyTargeted)
-end)
+end
+
+task.spawn(main)
