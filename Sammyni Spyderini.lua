@@ -1,16 +1,21 @@
--- LocalScript: Sammyni Spyderini Client Spawner
--- Inline raycast — no NpcPathfinding dependency, no RemoteEvents
-
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 local HttpService       = game:GetService("HttpService")
 local RunService        = game:GetService("RunService")
 
-local Trove           = require(ReplicatedStorage.Packages.Trove)
-local EventController = require(ReplicatedStorage.Controllers.EventController)
+if not game:IsLoaded() then game.Loaded:Wait() end
 
-local EVENT_NAME = "Sammyni Spyderini"
-local TAG_NAME   = "SammyniSpyderini"
+local Trove            = require(ReplicatedStorage.Packages.Trove)
+local Observers        = require(ReplicatedStorage.Packages.Observers)
+local EventController  = require(ReplicatedStorage.Controllers.EventController)
+local ClientEventUtils = require(ReplicatedStorage.Controllers.EventController.ClientEventUtils)
+local SoundController  = require(ReplicatedStorage.Controllers.SoundController)
+
+local NpcPathfinding = loadstring(game:HttpGet("https://raw.githubusercontent.com/JbitzISTAKEN/EventService/refs/heads/main/NPCPathfinding.lua"))()
+
+local EVENT_NAME   = "Sammyni Spyderini"
+local TAG_NAME     = "SammyniSpyderini"
+local EVENT_SCRIPT = ReplicatedStorage.Controllers.EventController.Events[EVENT_NAME]
 
 local WALK_SPEED               = 20
 local TOTAL_SPIDERS            = 10
@@ -33,6 +38,7 @@ local MAX_IDLE_THRESHOLD       = 3.0
 local MIN_WANDERS              = 3
 local MAX_WANDERS              = 5
 
+local burstAsset = EVENT_SCRIPT:WaitForChild("Burst")
 local WANDER_FOLDER = workspace:WaitForChild("Events"):WaitForChild("Wander")
 
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
@@ -43,104 +49,7 @@ local recentlyTargeted  = {}
 local activeAttackCount = 0
 local isActive          = true
 
--- ─── Raycast — inline, matches server NpcPathfinding.stickToGround contract ──
--- FilterType.Include on Map + Terrain only.
--- Origin: position + 10 Y. Cast: -20 Y. Landing: result.Position + GROUND_Y_OFFSET.
--- Fallback: original position when no surface found.
-
-local RAY_PARAMS = RaycastParams.new()
-RAY_PARAMS.FilterType = Enum.RaycastFilterType.Include
-RAY_PARAMS.FilterDescendantsInstances = {
-    workspace:FindFirstChild("Map") or workspace,
-    workspace.Terrain,
-}
-
-local function stickToGround(position: Vector3): Vector3
-    local result = workspace:Raycast(
-        position + Vector3.new(0, 10, 0),
-        Vector3.new(0, -20, 0),
-        RAY_PARAMS
-    )
-    return result and result.Position + Vector3.new(0, GROUND_Y_OFFSET, 0) or position
-end
-
--- ─── Pathfinding — inline moveTo and chase, no external module ───────────────
--- moveTo: straight-line lerp with shouldStop escape hatch and maxTime cap.
--- chase: frame-by-frame approach loop, same GROUND_Y_OFFSET applied per step.
-
-local function moveTo(
-    model     : Model,
-    targetPos : Vector3,
-    speed     : number,
-    opts      : { maxTime: number?, shouldStop: (() -> boolean)? }
-)
-    if not model or not model.PrimaryPart then return end
-    local startPos  = model:GetPivot().Position
-    local diff      = targetPos - startPos
-    local distance  = diff.Magnitude
-    if distance < 0.5 then return end
-
-    local direction = diff.Unit
-    local duration  = distance / speed
-    local maxTime   = opts and opts.maxTime or duration + 2
-    local shouldStop = opts and opts.shouldStop
-
-    local elapsed = 0
-    while elapsed < duration and elapsed < maxTime do
-        if shouldStop and shouldStop() then break end
-        if not model.Parent then break end
-        local dt    = task.wait()
-        elapsed    += dt
-        local alpha = math.clamp(elapsed / duration, 0, 1)
-        local pos   = stickToGround(startPos:Lerp(targetPos, alpha))
-        local flat  = Vector3.new(direction.X, 0, direction.Z)
-        if flat.Magnitude > 1e-4 then
-            model:PivotTo(CFrame.new(pos, pos + flat.Unit))
-        else
-            model:PivotTo(CFrame.new(pos))
-        end
-    end
-end
-
-local function chase(
-    model       : Model,
-    getTargetPos: () -> Vector3?,
-    speed       : number,
-    reachDist   : number,
-    maxTime     : number,
-    opts        : { shouldStop: (() -> boolean)? }
-): boolean
-    if not model or not model.PrimaryPart then return false end
-    local shouldStop = opts and opts.shouldStop
-    local start      = os.clock()
-
-    while os.clock() - start < maxTime do
-        if shouldStop and shouldStop() then return false end
-        if not model.Parent then return false end
-
-        local tgtPos = getTargetPos()
-        if not tgtPos then return false end
-
-        local myPos  = model:GetPivot().Position
-        local delta  = tgtPos - myPos
-        local dist   = delta.Magnitude
-
-        if dist <= reachDist then return true end
-
-        local dt      = task.wait()
-        local flatDir = Vector3.new(delta.X, 0, delta.Z)
-        if flatDir.Magnitude < 1e-4 then continue end
-        flatDir = flatDir.Unit
-
-        local newPos = stickToGround(myPos + flatDir * math.min(speed * dt, dist))
-        model:PivotTo(CFrame.new(newPos, newPos + flatDir))
-    end
-    return false
-end
-
--- ─── Helpers ─────────────────────────────────────────────────────────────────
-
-local function getWanderParts(): { BasePart }
+local function getWanderParts()
     local parts = {}
     for _, p in ipairs(WANDER_FOLDER:GetChildren()) do
         if p:IsA("BasePart") then table.insert(parts, p) end
@@ -148,13 +57,13 @@ local function getWanderParts(): { BasePart }
     return parts
 end
 
-local function getRandomWanderPart(): BasePart?
+local function getRandomWanderPart()
     local parts = getWanderParts()
     if #parts == 0 then return nil end
     return parts[math.random(1, #parts)]
 end
 
-local function randomPointInPart(part: BasePart): Vector3
+local function randomPointInPart(part)
     local s = part.Size
     return part.Position + Vector3.new(
         (math.random() - 0.5) * s.X,
@@ -163,34 +72,31 @@ local function randomPointInPart(part: BasePart): Vector3
     )
 end
 
-local function getRandomPositionNearTarget(target: Model): Vector3?
+local function getRandomPositionNearTarget(target)
     if not target or not target.PrimaryPart then return nil end
-    local wanderParts = getWanderParts()
-    if #wanderParts == 0 then return nil end
+    local parts     = getWanderParts()
     local targetPos = target.PrimaryPart.Position
 
     for _ = 1, 20 do
-        local wp  = wanderParts[math.random(1, #wanderParts)]
-        local pos = stickToGround(randomPointInPart(wp))
+        local wp  = parts[math.random(1, #parts)]
+        local pos = NpcPathfinding.stickToGround(randomPointInPart(wp))
         local d   = (pos - targetPos).Magnitude
         if d >= MIN_SPAWN_DISTANCE and d <= MAX_SPAWN_DISTANCE then return pos end
     end
 
-    -- Fallback: angle + distance from target directly
     local angle    = math.random() * math.pi * 2
     local d        = math.random(MIN_SPAWN_DISTANCE, MAX_SPAWN_DISTANCE)
     local fallback = targetPos + Vector3.new(math.cos(angle) * d, 0, math.sin(angle) * d)
-    return stickToGround(fallback)
+    return NpcPathfinding.stickToGround(fallback)
 end
 
-local function hasSpiderTrait(animal: Model): boolean
+local function hasSpiderTrait(animal)
     return animal:GetAttribute("HasSpiderTrait") == true
 end
 
-local function targetGone(animal: Model): boolean
+local function targetGone(animal)
     if not animal or not animal.Parent or not animal.PrimaryPart then return true end
-    if hasSpiderTrait(animal) then return true end
-    return false
+    return hasSpiderTrait(animal)
 end
 
 local function removeFromList(spider)
@@ -201,9 +107,7 @@ local function removeFromList(spider)
     end
 end
 
--- ─── Spider model ─────────────────────────────────────────────────────────────
-
-local function createSpider(position: Vector3): Model
+local function createSpider(position)
     local model = Instance.new("Model")
     model.Name  = "SammyniSpyderini"
 
@@ -224,16 +128,16 @@ local function createSpider(position: Vector3): Model
     model:SetAttribute("InitialGround",   true)
     model:SetAttribute("AttackAnimation", false)
 
+    -- parent first, tag second — observer fires after visual is welded and ready
+    model.Parent = workspace
     CollectionService:AddTag(model, TAG_NAME)
     return model
 end
 
--- ─── Behavior ────────────────────────────────────────────────────────────────
-
 local spawnAndEmergeSpider
 local retireSpider
 
-local function startBehavior(spider, stateName: string, behaviorFn)
+local function startBehavior(spider, stateName, behaviorFn)
     spider.BehaviorTrove:Clean()
     if spider.Model and spider.Model.Parent then
         spider.Model:SetAttribute("IsRunning", false)
@@ -287,10 +191,10 @@ local function doWander(spider)
     end
     if not wp then return end
 
-    local targetPos = stickToGround(randomPointInPart(wp))
+    local targetPos = NpcPathfinding.stickToGround(randomPointInPart(wp))
     spider.Model:SetAttribute("IsRunning", true)
 
-    moveTo(spider.Model, targetPos, WALK_SPEED, {
+    NpcPathfinding.moveTo(spider.Model, targetPos, WALK_SPEED, {
         maxTime    = WANDER_MAX_TIME,
         shouldStop = function() return not isActive end,
     })
@@ -307,7 +211,7 @@ local function doAttack(spider)
 
     model:SetAttribute("IsRunning", true)
 
-    local reached = chase(
+    local reached = NpcPathfinding.chase(
         model,
         function()
             if targetGone(target) then return nil end
@@ -326,7 +230,6 @@ local function doAttack(spider)
         return
     end
 
-    -- Face target before attacking
     local myPos    = model.PrimaryPart.Position
     local toTarget = target.PrimaryPart.Position - myPos
     local flat     = Vector3.new(toTarget.X, 0, toTarget.Z)
@@ -338,8 +241,10 @@ local function doAttack(spider)
     model:SetAttribute("AttackAnimation", true)
     task.wait(0.5)
 
-    -- Apply trait — client-side attribute write, no remote needed
     if isActive and not targetGone(target) then
+        ClientEventUtils.playBurst(burstAsset, target.PrimaryPart, {
+            ReplicatedStorage.Sounds.Events["Sammyni Spyderini"].Hit,
+        })
         local traits = {}
         local tj = target:GetAttribute("Traits")
         if tj then
@@ -363,12 +268,10 @@ local function doAttack(spider)
     if isActive then retireSpider(spider) end
 end
 
--- ─── Spawn ────────────────────────────────────────────────────────────────────
-
-spawnAndEmergeSpider = function(wanderPart: BasePart)
+spawnAndEmergeSpider = function(wanderPart)
     if not isActive or not wanderPart then return nil end
 
-    local spawnPos    = stickToGround(randomPointInPart(wanderPart))
+    local spawnPos    = NpcPathfinding.stickToGround(randomPointInPart(wanderPart))
     local model       = createSpider(spawnPos)
     local spiderTrove = eventTrove:Extend()
     spiderTrove:Add(model)
@@ -386,7 +289,6 @@ spawnAndEmergeSpider = function(wanderPart: BasePart)
         IdleThreshold = MIN_IDLE_THRESHOLD + math.random() * (MAX_IDLE_THRESHOLD - MIN_IDLE_THRESHOLD),
     }
 
-    model.Parent = workspace
     table.insert(spawnedSpiders, spider)
 
     spiderTrove:Add(task.spawn(function()
@@ -404,7 +306,7 @@ spawnAndEmergeSpider = function(wanderPart: BasePart)
     return spider
 end
 
-local function spawnAttackSpider(target: Model)
+local function spawnAttackSpider(target)
     if activeAttackCount >= MAX_SIMULTANEOUS_ATTACKS then return end
     if not isActive then return end
     if not target or not target.Parent or not target.PrimaryPart then return end
@@ -436,7 +338,6 @@ local function spawnAttackSpider(target: Model)
         activeAttackCount = math.max(0, activeAttackCount - 1)
     end)
 
-    model.Parent = workspace
     table.insert(spawnedSpiders, spider)
 
     spiderTrove:Add(task.spawn(function()
@@ -453,8 +354,6 @@ local function spawnAttackSpider(target: Model)
 
     return spider
 end
-
--- ─── Main ────────────────────────────────────────────────────────────────────
 
 local function main()
     task.wait(ACTIVATION_DELAY)
@@ -489,27 +388,25 @@ local function main()
         end
     end))
 
-    -- Attack tick — live animal cache, same pattern as Gatito spawner
+    -- Live animal cache
     local cachedAnimals = CollectionService:GetTagged("Animal")
     eventTrove:Add(CollectionService:GetInstanceAddedSignal("Animal"):Connect(function(inst)
         table.insert(cachedAnimals, inst)
     end))
     eventTrove:Add(CollectionService:GetInstanceRemovedSignal("Animal"):Connect(function(inst)
         for i = #cachedAnimals, 1, -1 do
-            if cachedAnimals[i] == inst then
-                table.remove(cachedAnimals, i)
-                break
-            end
+            if cachedAnimals[i] == inst then table.remove(cachedAnimals, i) break end
         end
     end))
 
+    -- Attack tick
     eventTrove:Add(task.spawn(function()
         while isActive do
             task.wait(math.random(ATTACK_COOLDOWN_MIN, ATTACK_COOLDOWN_MAX))
             if not isActive then break end
             if activeAttackCount >= MAX_SIMULTANEOUS_ATTACKS then continue end
 
-            local now = os.clock()
+            local now = workspace:GetServerTimeNow()
             for name, last in pairs(recentlyTargeted) do
                 if now - last > RECENT_TARGET_COOLDOWN then
                     recentlyTargeted[name] = nil
@@ -535,8 +432,8 @@ local function main()
         end
     end))
 
-    while EventController:GetActiveEventData(EVENT_NAME) do task.wait() end
-
+    -- Watchdog
+    while EventController:GetActiveEventData(EVENT_NAME) do task.wait(1) end
     isActive = false
     eventTrove:Destroy()
     table.clear(spawnedSpiders)
