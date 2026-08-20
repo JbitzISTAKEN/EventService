@@ -1,10 +1,10 @@
-local ReplicatedStorage      = game:GetService("ReplicatedStorage")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ProximityPromptService = game:GetService("ProximityPromptService")
 local CollectionService      = game:GetService("CollectionService")
 local HttpService             = game:GetService("HttpService")
-local RunService             = game:GetService("RunService")
-local TweenService           = game:GetService("TweenService")
-local Players                = game:GetService("Players")
+local RunService              = game:GetService("RunService")
+local TweenService            = game:GetService("TweenService")
+local Players                 = game:GetService("Players")
 
 if not game:IsLoaded() then game.Loaded:Wait() end
 
@@ -36,10 +36,39 @@ repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
 local eventData = EventController:GetActiveEventData(EVENT_NAME)
 local startedAt = eventData.startedAt
 
+local function getEffectEventName()
+	for attr, val in ReplicatedStorage:GetAttributes() do
+		if type(val) == "boolean" and val and attr:sub(-5) == "Event" then
+			return attr
+		end
+	end
+end
+
+local effectEventName = getEffectEventName()
+if not effectEventName then
+	repeat
+		ReplicatedStorage.AttributeChanged:Wait()
+		effectEventName = getEffectEventName()
+	until effectEventName
+end
+
+while not (_G.EffectStartSignals and _G.EffectStartSignals[effectEventName]) do
+	task.wait()
+end
+
 local eventTrove = Trove.new()
 local isActive   = true
 
--- ─── Trait helpers ────────────────────────────────────────────────────────────
+local housesModel do
+	local objects = game:GetObjects("rbxassetid://115610014866510")
+	local model   = objects and objects[1]
+	if model then
+		model.Name   = "Houses"
+		model.Parent = workspace
+		eventTrove:Add(model)
+	end
+	housesModel = model
+end
 
 local function has(animal)
 	if not animal or not animal.Parent then return false end
@@ -67,8 +96,6 @@ local function apply(animal)
 	table.insert(list, BLOCKING_TRAIT)
 	animal:SetAttribute("Traits", HttpService:JSONEncode(list))
 end
-
--- ─── Screen candy effect ──────────────────────────────────────────────────────
 
 local function playScreenCandyEffect()
 	local rng        = Random.new()
@@ -98,8 +125,6 @@ local function playScreenCandyEffect()
 	end
 end
 
--- ─── Asset loads ──────────────────────────────────────────────────────────────
-
 local wanderFolder do
 	local objects = game:GetObjects("rbxassetid://112482579241084")
 	local folder  = objects and objects[1]
@@ -111,24 +136,9 @@ local wanderFolder do
 	wanderFolder = folder
 end
 
--- Template is a direct child of wanderFolder — the pumpkin model
--- Idle and Move animations live inside the Template
 local PumpkinTemplate = wanderFolder and wanderFolder:FindFirstChild("Template")
 local IdleAnim        = PumpkinTemplate and PumpkinTemplate:FindFirstChild("Idle", true)
 local MoveAnim        = PumpkinTemplate and PumpkinTemplate:FindFirstChild("Move", true)
-
-local housesModel do
-	local objects = game:GetObjects("rbxassetid://115610014866510")
-	local model   = objects and objects[1]
-	if model then
-		model.Name   = "Houses"
-		model.Parent = workspace
-		eventTrove:Add(model)
-	end
-	housesModel = model
-end
-
--- ─── Door observer ────────────────────────────────────────────────────────────
 
 eventTrove:Add(Observers.observeTag("TrickOrTreatDoor", function(door)
 	local originCF = door:GetPivot()
@@ -142,15 +152,17 @@ eventTrove:Add(Observers.observeTag("TrickOrTreatDoor", function(door)
 	end)
 end))
 
--- ─── Pumpkin visual observer ──────────────────────────────────────────────────
--- Clones Template (the pumpkin model) and welds it to the tagged Part.
--- Idle and Move are Animation objects found inside the Template.
-
 eventTrove:Add(Observers.observeTag("TrickOrTreatEventPumpkin", function(part)
 	if not PumpkinTemplate then return end
 	local t   = Trove.new()
 	local mdl = t:Clone(PumpkinTemplate)
-	mdl:ScaleTo(part:GetAttribute("Scale") or 1)
+
+	-- ScaleTo is a Model method — pcall guards against the Template
+	-- being a plain BasePart in some asset versions, which has no ScaleTo
+	pcall(function()
+		mdl:ScaleTo(part:GetAttribute("Scale") or 1)
+	end)
+
 	mdl.Parent = workspace
 
 	local weld      = Instance.new("Weld")
@@ -180,8 +192,6 @@ eventTrove:Add(Observers.observeTag("TrickOrTreatEventPumpkin", function(part)
 	return t:WrapClean()
 end, { workspace }))
 
--- ─── Pumpkin state ────────────────────────────────────────────────────────────
-
 local pumpkinParts  = {}
 local pTasks        = {}
 local targetted     = {}
@@ -201,7 +211,6 @@ local function pickPumpkin()
 	for _, p in ipairs(pumpkinParts) do
 		if not isOccupied(p) then return p end
 	end
-	warn("No pumpkins available!")
 	return nil
 end
 
@@ -259,10 +268,10 @@ local function hit(targetAnimal)
 				pumpkinTrove:Clean()
 
 				if not has(targetAnimal) then
+					apply(targetAnimal)
 					ClientEventUtils.playBurst(EventScript.Burst, targetAnimal.Name, {
 						Sounds.BrainrotHit,
 					})
-					apply(targetAnimal)
 				end
 
 				task.wait(POST_HIT_WAIT)
@@ -298,8 +307,6 @@ local function hit(targetAnimal)
 		end)
 	end)
 end
-
--- ─── House prompt ─────────────────────────────────────────────────────────────
 
 eventTrove:Add(ProximityPromptService.PromptTriggered:Connect(function(prompt, plr)
 	if plr ~= LocalPlayer then return end
@@ -397,8 +404,6 @@ eventTrove:Add(ProximityPromptService.PromptTriggered:Connect(function(prompt, p
 
 	animal:Destroy()
 end))
-
--- ─── Main ─────────────────────────────────────────────────────────────────────
 
 local function main()
 	local pumpkinsFolder = wanderFolder and wanderFolder:FindFirstChild("Pumpkins")
