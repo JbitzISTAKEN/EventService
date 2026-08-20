@@ -2,6 +2,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 local HttpService       = game:GetService("HttpService")
 local RunService        = game:GetService("RunService")
+local TweenService      = game:GetService("TweenService")
 
 if not game:IsLoaded() then game.Loaded:Wait() end
 
@@ -12,22 +13,20 @@ local SharedEventUtils = require(ReplicatedStorage.Shared.SharedEventUtils)
 local SoundController  = require(ReplicatedStorage.Controllers.SoundController)
 local EventController  = require(ReplicatedStorage.Controllers.EventController)
 local ClientEventUtils = require(ReplicatedStorage.Controllers.EventController.ClientEventUtils)
-local TweenService     = require(game:GetService("TweenService") and game:GetService("TweenService"))
-TweenService           = game:GetService("TweenService")
 
 local EVENT_NAME  = "4th of July"
 local EventAssets = ReplicatedStorage.Controllers.EventController.Events[EVENT_NAME]
 local Sounds      = ReplicatedStorage.Sounds.Events[EVENT_NAME]
 
-local FALLOFF_COUNT_MIN    = 6
-local FALLOFF_COUNT_MAX    = 9
+local BLOCKING_TRAIT        = "Fireworks"
+local FIREWORK_HIT_RADIUS   = 10
+local FALLOFF_TRAVEL_TIME   = 2.3
 local FALLOFF_SPREAD_RADIUS = 70
-local FALLOFF_TRAVEL_TIME  = 2.3
-local FIREWORK_HEIGHT_MIN  = 80
-local FIREWORK_HEIGHT_MAX  = 120
+local FIREWORK_HEIGHT_MIN   = 80
+local FIREWORK_HEIGHT_MAX   = 120
 local FIREWORK_EFFECT_COUNT = 3
-local FIREWORK_HIT_RADIUS  = 10
-local BLOCKING_TRAIT       = "Fireworks"
+local FALLOFF_COUNT_MIN     = 6
+local FALLOFF_COUNT_MAX     = 9
 
 local RayParams = RaycastParams.new()
 RayParams.FilterType = Enum.RaycastFilterType.Include
@@ -38,7 +37,6 @@ RayParams.FilterDescendantsInstances = {
 
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
 local eventData = EventController:GetActiveEventData(EVENT_NAME)
-local startedAt = eventData.startedAt
 
 local eventTrove = Trove.new()
 local isActive   = true
@@ -79,15 +77,14 @@ end
 
 -- ─── Firework ─────────────────────────────────────────────────────────────────
 
-local function fireOne(launchCF)
-    local height  = math.random(FIREWORK_HEIGHT_MIN, FIREWORK_HEIGHT_MAX)
-    local peakCF  = launchCF + Vector3.new(0, height, 0)
-    local travel  = height / 20
-    local groundCF = launchCF - Vector3.new(0, 0, 0) -- base, used for falloff origin
+local function fireOne(launcher, originalCFrames)
+    local launchCF = originalCFrames[launcher]
+    local height   = math.random(FIREWORK_HEIGHT_MIN, FIREWORK_HEIGHT_MAX)
+    local peakCF   = launchCF + Vector3.new(0, height, 0)
+    local travel   = height / 20
 
-    -- startup flash
     local startup = EventAssets.FireworkStartup:Clone()
-    startup.CFrame = launchCF
+    startup.CFrame = launchCF + Vector3.new(0, launcher.Size.Y * 0.5 - startup.Size.Y * 0.5, 0)
     startup.Parent = workspace
     VFX.emit(startup)
     local shotSfx = Sounds.Shot:Clone()
@@ -95,7 +92,6 @@ local function fireOne(launchCF)
     SoundController:PlaySound(shotSfx)
     task.delay(2, function() startup:Destroy() end)
 
-    -- projectile
     local proj = EventAssets.Firework:Clone()
     proj.CFrame = launchCF
     proj.Parent = workspace
@@ -121,21 +117,20 @@ local function fireOne(launchCF)
         VFX.emit(fx)
         task.delay(4, function() fx:Destroy() end)
 
-        -- falloffs
-        local falloffCount = math.random(FALLOFF_COUNT_MIN, FALLOFF_COUNT_MAX)
-        for _ = 1, falloffCount do
+        local groundCF = launchCF - Vector3.new(0, launcher.Size.Y, 0)
+
+        for _ = 1, math.random(FALLOFF_COUNT_MIN, FALLOFF_COUNT_MAX) do
             local angle  = math.random() * math.pi * 2
             local r      = math.random() * FALLOFF_SPREAD_RADIUS
             local ox, oz = math.cos(angle) * r, math.sin(angle) * r
-
-            local rayOrigin = (peakCF + Vector3.new(ox, 0, oz)).Position
-            local hit       = workspace:Raycast(rayOrigin, Vector3.new(0, -200, 0), RayParams)
-            local destCF    = hit and CFrame.new(hit.Position) or groundCF + Vector3.new(ox, 0, oz)
+            local hit    = workspace:Raycast((peakCF + Vector3.new(ox, 0, oz)).Position, Vector3.new(0, -200, 0), RayParams)
+            local destCF = hit and CFrame.new(hit.Position) or groundCF + Vector3.new(ox, 0, oz)
 
             local trail   = EventAssets.Falloff:Clone()
             trail.CFrame  = peakCF
             trail.Parent  = workspace
             local elapsed = 0
+            local fired   = false
             local conn
             conn = RunService.PostSimulation:Connect(function(dt)
                 debug.profilebegin("4th of July:Falloff")
@@ -146,7 +141,8 @@ local function fireOne(launchCF)
                     peakCF.Position + Vector3.new(0, height, 0) + (destCF.Position - peakCF.Position) * Vector3.new(1, 0, 1) * 0.7,
                     destCF.Position
                 )))
-                if t >= 1 then
+                if t >= 1 and not fired then
+                    fired = true
                     local impact = EventAssets.GroundImpact:Clone()
                     impact.CFrame = destCF + Vector3.new(0, impact.Size.Y * 0.5, 0)
                     impact.Parent = workspace
@@ -155,7 +151,6 @@ local function fireOne(launchCF)
                     task.delay(3, function() trail:Destroy() impact:Destroy() end)
                     conn:Disconnect()
 
-                    -- hit detection
                     for _, animal in ipairs(getAnimalsNear(destCF.Position, FIREWORK_HIT_RADIUS)) do
                         if not hasTrait(animal, BLOCKING_TRAIT) then
                             ClientEventUtils.playBurst(EventAssets.FireworkBurst, animal.Name, {
@@ -175,16 +170,15 @@ end
 -- ─── Main ─────────────────────────────────────────────────────────────────────
 
 local function main()
-    -- wait for launchers to rise — same as document 10
     local fireworksModel = workspace:WaitForChild("Fireworks", 30)
     if not fireworksModel then
         warn("[4thJuly] Fireworks model never appeared in workspace")
         return
     end
 
-    local source       = ReplicatedStorage.Models.Events[EVENT_NAME].Fireworks
-    local targets      = {}
-    local launchers    = {}
+    local source        = ReplicatedStorage.Models.Events[EVENT_NAME].Fireworks
+    local targets       = {}
+    local launchers     = {}
     local originalCFrames = {}
 
     for _, p in source:GetChildren() do
@@ -199,12 +193,12 @@ local function main()
     end
 
     if #launchers == 0 then
-        warn("[4thJuly] No matching launcher parts found")
+        warn("[4thJuly] No launcher parts found")
         return
     end
 
-    -- wait for all launchers to finish rising
-    local risen  = 0
+    -- wait for all launchers to rise
+    local risen    = 0
     local riseDone = Instance.new("BindableEvent")
 
     for _, p in launchers do
@@ -229,16 +223,18 @@ local function main()
     riseDone:Destroy()
     if not isActive then return end
 
-    -- firework loop — 1:1 timing to server (20-40 / 10 = 2.0-4.0s wait)
+    -- firework loop — wait for launchers to fall via model.Destroying
     eventTrove:Add(task.spawn(function()
         while isActive do
-            local count = math.random(1, 3)
-            for _ = 1, count do
-                fireOne(originalCFrames[launchers[math.random(1, #launchers)]])
+            for _ = 1, math.random(1, 3) do
+                fireOne(launchers[math.random(1, #launchers)], originalCFrames)
             end
             task.wait(math.random(20, 40) / 10)
         end
     end))
+
+    fireworksModel.Destroying:Wait()
+    isActive = false
 
     -- Cleanup watchdog
     while EventController:GetActiveEventData(EVENT_NAME) do task.wait(1) end
