@@ -2,6 +2,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 local HttpService       = game:GetService("HttpService")
 
+if not game:IsLoaded() then game.Loaded:Wait() end
+
 local ClientEventUtils = require(ReplicatedStorage.Controllers.EventController.ClientEventUtils)
 local EventController  = require(ReplicatedStorage.Controllers.EventController)
 local Trove            = require(ReplicatedStorage.Packages.Trove)
@@ -11,8 +13,11 @@ local EVENT_NAME      = "Valentines"
 local CHOCOLATE_TRAIT = "Chocolate"
 local COOLDOWN_TIME   = 25
 
+local EventFolder = ReplicatedStorage.Controllers.EventController.Events.Valentines
+
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
 local eventData = EventController:GetActiveEventData(EVENT_NAME)
+local startedAt = eventData.startedAt
 
 local eventTrove       = Trove.new()
 local isActive         = true
@@ -67,7 +72,7 @@ local function triggerHit(animal)
     if not SharedEventUtils.isPointInCarpet(animal.PrimaryPart.Position) then return end
     recentlyTargeted[animal.Name] = workspace:GetServerTimeNow()
     grantChocolate(animal)
-    ClientEventUtils.playBurst(script.Burst, animal.Name, {
+    ClientEventUtils.playBurst(EventFolder.Burst, animal.Name, {
         ReplicatedStorage.Sounds.Events["Valentines"].Hit
     })
 end
