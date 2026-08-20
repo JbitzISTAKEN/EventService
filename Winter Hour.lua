@@ -5,6 +5,8 @@ local RunService        = game:GetService("RunService")
 local TweenService      = game:GetService("TweenService")
 local Players           = game:GetService("Players")
 
+if not game:IsLoaded() then game.Loaded:Wait() end
+
 local MathUtils         = require(ReplicatedStorage.Utils.MathUtils)
 local AnimalController  = require(ReplicatedStorage.Controllers.AnimalController)
 local SoundController   = require(ReplicatedStorage.Controllers.SoundController)
