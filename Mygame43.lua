@@ -194,7 +194,7 @@ local function main()
         EffectController:Activate("Blink")
     end)
 
-    local modelClone = trove:Clone(ReplicatedStorage.Models.Events["Phase 4: Mygame43"].mygame43)
+    local modelClone = trove:Clone(ReplicatedStorage.Models.Events["Mygame43"].mygame43)
     mygame43Model = modelClone
 
     Sounds.Appear:Play()
