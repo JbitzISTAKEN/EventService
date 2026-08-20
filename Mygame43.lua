@@ -1,10 +1,12 @@
-if not game:IsLoaded() then game.Loaded:Wait() end
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService      = game:GetService("TweenService")
 local RunService        = game:GetService("RunService")
 local CollectionService = game:GetService("CollectionService")
 local HttpService       = game:GetService("HttpService")
+
+if not game:IsLoaded() then game.Loaded:Wait() end
+
 
 local SkullEmojiEffectController = require(ReplicatedStorage.Controllers.SkullEmojiEffectController)
 local EffectController           = require(ReplicatedStorage.Controllers.EffectController)
@@ -19,9 +21,9 @@ local Trove                      = require(ReplicatedStorage.Packages.Trove)
 local Spr                        = require(ReplicatedStorage.Packages.Spr)
 local VFX                        = require(ReplicatedStorage.Shared.VFX)
 
-local EVENT_NAME    = "Mygame43"
-local EVENT_SCRIPT  = ReplicatedStorage.Controllers.EventController.Events[EVENT_NAME]
-local Sounds        = ReplicatedStorage.Sounds.Events[EVENT_NAME]
+local EVENT_NAME   = "Mygame43"
+local EVENT_SCRIPT = ReplicatedStorage.Controllers.EventController.Events[EVENT_NAME]
+local Sounds       = ReplicatedStorage.Sounds.Events[EVENT_NAME]
 local CurrentCamera = workspace.CurrentCamera
 
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
@@ -196,9 +198,8 @@ local function main()
         EffectController:Activate("Blink")
     end)
 
-    -- clone model into workspace 1:1 server (doc 15)
+    -- clone off-screen, animate first, parent last
     local modelClone = trove:Clone(ReplicatedStorage.Models.Events.Mygame43.mygame43)
-    modelClone.Parent = workspace
     mygame43Model = modelClone
 
     Sounds.Appear:Play()
@@ -213,6 +214,9 @@ local function main()
         idle:Stop()
         spawn:Stop()
     end)
+
+    -- first visible frame already has animation weight — no T-pose flash
+    modelClone.Parent = workspace
 
     trove:Add(task.delay(math.max(0, timeLeftFor(7.7)), function()
         for i = 1, 4 do
