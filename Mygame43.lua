@@ -1,4 +1,3 @@
-
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService      = game:GetService("TweenService")
 local RunService        = game:GetService("RunService")
@@ -6,7 +5,6 @@ local CollectionService = game:GetService("CollectionService")
 local HttpService       = game:GetService("HttpService")
 
 if not game:IsLoaded() then game.Loaded:Wait() end
-
 
 local SkullEmojiEffectController = require(ReplicatedStorage.Controllers.SkullEmojiEffectController)
 local EffectController           = require(ReplicatedStorage.Controllers.EffectController)
@@ -76,7 +74,7 @@ local function pruneRecents()
     end
 end
 
-local function pickTarget()
+local function pickTarget(flightDuration)
     pruneRecents()
 
     if math.random(1, 100) <= 35 then
@@ -92,15 +90,14 @@ local function pickTarget()
 
         if #candidates > 0 then
             local animal = candidates[math.random(1, #candidates)]
-            local flight = Random.new():NextNumber(1.5, 2.5)
             local vel    = Vector3.zero
             if animal.PrimaryPart:IsA("BasePart") then
                 vel = animal.PrimaryPart.AssemblyLinearVelocity
             end
-            local predicted = animal.PrimaryPart.Position + vel * flight
+            local predicted = animal.PrimaryPart.Position + vel * flightDuration
             if SharedEventUtils.isPointInCarpet(animal.PrimaryPart.Position) then
                 recentlyHit[animal.Name] = workspace:GetServerTimeNow()
-                return predicted, flight, true, animal
+                return predicted, true, animal
             end
         end
     end
@@ -109,12 +106,11 @@ local function pickTarget()
     if wanderFolder then
         local parts = wanderFolder:GetChildren()
         if #parts > 0 then
-            local flight = Random.new():NextNumber(1.5, 2.5)
-            return parts[Random.new():NextInteger(1, #parts)].Position, flight, false, nil
+            return parts[Random.new():NextInteger(1, #parts)].Position, false, nil
         end
     end
 
-    return nil, nil, false, nil
+    return nil, false, nil
 end
 
 local function fireOrb(seed, orbIndex, targetPos, flightDuration, didHit)
@@ -198,8 +194,7 @@ local function main()
         EffectController:Activate("Blink")
     end)
 
-    -- clone off-screen, animate first, parent last
-    local modelClone = trove:Clone(ReplicatedStorage.Models.Events.Mygame43.mygame43)
+    local modelClone = trove:Clone(ReplicatedStorage.Models.Events["Phase 4: Mygame43"].mygame43)
     mygame43Model = modelClone
 
     Sounds.Appear:Play()
@@ -215,7 +210,6 @@ local function main()
         spawn:Stop()
     end)
 
-    -- first visible frame already has animation weight — no T-pose flash
     modelClone.Parent = workspace
 
     trove:Add(task.delay(math.max(0, timeLeftFor(7.7)), function()
@@ -261,24 +255,22 @@ local function main()
         end)
     end))
 
+    -- orb loop
     trove:Add(task.spawn(function()
         local gate = timeLeftFor(7.7)
         if gate > 0 then task.wait(gate) end
 
         while EventController:GetActiveEventData(EVENT_NAME) do
-            local waitTime = Random.new():NextNumber(2, 4)
-            local t0 = os.clock()
-            while os.clock() - t0 < waitTime do
-                task.wait()
-                if not EventController:GetActiveEventData(EVENT_NAME) then break end
-            end
+            task.wait(Random.new():NextNumber(2, 4))
             if not EventController:GetActiveEventData(EVENT_NAME) then break end
 
             local numBalls = math.random(1, 2)
             for i = 1, numBalls do
                 if not EventController:GetActiveEventData(EVENT_NAME) then break end
 
-                local targetPos, flightDuration, didHit, targetAnimal = pickTarget()
+                local flightDuration = Random.new():NextNumber(1.5, 2.5)
+                local targetPos, didHit, targetAnimal = pickTarget(flightDuration)
+
                 if targetPos then
                     local seed     = Random.new():NextInteger(1, 999999)
                     local orbIndex = Random.new():NextInteger(1, 4)
@@ -303,18 +295,19 @@ local function main()
                 end
 
                 if i < numBalls then
-                    local t1 = os.clock()
-                    while os.clock() - t1 < 0.5 do
-                        task.wait()
-                        if not EventController:GetActiveEventData(EVENT_NAME) then break end
-                    end
+                    task.wait(0.5)
                 end
             end
         end
-
-        trove:Destroy()
-        recentlyHit = {}
     end))
+
+    -- watchdog
+    while EventController:GetActiveEventData(EVENT_NAME) do task.wait(1) end
+    trove:Destroy()
+    recentlyHit = {}
+    if mygame43Model and mygame43Model.Parent then
+        mygame43Model:Destroy()
+    end
 end
 
 task.spawn(main)
