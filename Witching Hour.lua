@@ -3,6 +3,8 @@ local CollectionService = game:GetService("CollectionService")
 local HttpService       = game:GetService("HttpService")
 local RunService        = game:GetService("RunService")
 
+if not game:IsLoaded() then game.Loaded:Wait() end
+
 local MathUtils        = require(ReplicatedStorage.Utils.MathUtils)
 local AnimalController = require(ReplicatedStorage.Controllers.AnimalController)
 local SoundController  = require(ReplicatedStorage.Controllers.SoundController)
