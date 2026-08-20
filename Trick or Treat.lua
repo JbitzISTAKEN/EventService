@@ -155,39 +155,43 @@ end))
 eventTrove:Add(Observers.observeTag("TrickOrTreatEventPumpkin", function(part)
 	if not PumpkinTemplate then return end
 	local t   = Trove.new()
-	local mdl = t:Clone(PumpkinTemplate)
 
-	-- ScaleTo is a Model method — pcall guards against the Template
-	-- being a plain BasePart in some asset versions, which has no ScaleTo
-	pcall(function()
-		mdl:ScaleTo(part:GetAttribute("Scale") or 1)
+	local ok, err = pcall(function()
+		local mdl = t:Clone(PumpkinTemplate)
+
+		pcall(function() mdl:ScaleTo(part:GetAttribute("Scale") or 1) end)
+
+		mdl.Parent = workspace
+
+		local weld      = Instance.new("Weld")
+		weld.Part0      = mdl.PrimaryPart
+		weld.Part1      = part
+		weld.C0         = mdl.PrimaryPart.PivotOffset
+		weld.Parent     = mdl.PrimaryPart
+
+		local animator = mdl.AnimationController.Animator
+
+		local idle = animator:LoadAnimation(IdleAnim)
+		idle.Priority = Enum.AnimationPriority.Idle
+		idle.Looped   = true
+		idle:Play()
+		t:Add(function() idle:Stop(); idle:Destroy() end)
+
+		local move = animator:LoadAnimation(MoveAnim)
+		move.Priority = Enum.AnimationPriority.Action
+		move.Looped   = true
+		t:Add(function() move:Stop(); move:Destroy() end)
+
+		t:Add(Observers.observeAttribute(part, "Moving", function(moving)
+			if moving then move:Play() else move:Stop() end
+			return nil
+		end))
 	end)
 
-	mdl.Parent = workspace
-
-	local weld      = Instance.new("Weld")
-	weld.Part0      = mdl.PrimaryPart
-	weld.Part1      = part
-	weld.C0         = mdl.PrimaryPart.PivotOffset
-	weld.Parent     = mdl.PrimaryPart
-
-	local animator = mdl.AnimationController.Animator
-
-	local idle = animator:LoadAnimation(IdleAnim)
-	idle.Priority = Enum.AnimationPriority.Idle
-	idle.Looped   = true
-	idle:Play()
-	t:Add(function() idle:Stop(); idle:Destroy() end)
-
-	local move = animator:LoadAnimation(MoveAnim)
-	move.Priority = Enum.AnimationPriority.Action
-	move.Looped   = true
-	t:Add(function() move:Stop(); move:Destroy() end)
-
-	t:Add(Observers.observeAttribute(part, "Moving", function(moving)
-		if moving then move:Play() else move:Stop() end
-		return nil
-	end))
+	if not ok then
+		t:Clean()
+		return
+	end
 
 	return t:WrapClean()
 end, { workspace }))
