@@ -8,9 +8,9 @@ local HttpService       = game:GetService("HttpService")
 local Trove            = require(ReplicatedStorage.Packages.Trove)
 local EventController  = require(ReplicatedStorage.Controllers.EventController)
 local ClientEventUtils = require(ReplicatedStorage.Controllers.EventController.ClientEventUtils)
-local AnimalController = require(ReplicatedStorage.Controllers.AnimalController)
 local SoundController  = require(ReplicatedStorage.Controllers.SoundController)
 local ShakePresets     = require(ReplicatedStorage.Shared.ShakePresets)
+local MapInformation   = require(ReplicatedStorage.Shared.MapInformation)
 
 local EVENT_NAME   = "La Vacca Saturno Saturnita"
 local EVENT_SCRIPT = ReplicatedStorage:WaitForChild("Controllers")
@@ -20,7 +20,7 @@ local EVENT_SCRIPT = ReplicatedStorage:WaitForChild("Controllers")
 
 -- ─── Constants (1:1 server) ───────────────────────────────────────────────────
 
-local BLOCKING_TRAIT    = "Galactic"
+local BLOCKING_TRAIT   = "Galactic"
 local COMET_TRAVEL_TIME = 1
 local COMET_HEIGHT      = 200
 local SHAKE_RANGE       = 70
@@ -32,6 +32,7 @@ local ACTIVATION_DELAY  = 15
 
 -- ─── Asset resolution ─────────────────────────────────────────────────────────
 
+local cometAsset = EVENT_SCRIPT:WaitForChild("Comet")
 local burstAsset = EVENT_SCRIPT:WaitForChild("CometBurst")
 
 -- ─── Wait for event ───────────────────────────────────────────────────────────
@@ -42,11 +43,11 @@ local startedAt = eventData.startedAt
 
 -- ─── State ────────────────────────────────────────────────────────────────────
 
-local eventTrove      = Trove.new()
+local eventTrove       = Trove.new()
 local recentlyTargeted = {}
-local isActive        = true
-local rng             = Random.new()
-local currentCamera   = workspace.CurrentCamera
+local isActive         = true
+local rng              = Random.new()
+local currentCamera    = workspace.CurrentCamera
 
 -- ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -75,46 +76,48 @@ end
 local function fireComet(animal: Model)
     if not animal or not animal.PrimaryPart then return end
 
-    local cometStart = (ReplicatedStorage:GetAttribute("LaVaccaCenter") or workspace.MapCenter.Position)
+    local cometStart = CFrame.new(
+        (ReplicatedStorage:GetAttribute("LaVaccaCenter") or MapInformation.MapCenter.Position)
         + Vector3.new(0, COMET_HEIGHT, 0)
-
-    local startCFrame = CFrame.new(cometStart)
-
-    SoundController:PlaySound(
-        ReplicatedStorage.Sounds.Events["La Vacca Saturno Saturnita"].CommetActivation,
-        getAnimalPosition(animal)
     )
 
-    local comet = EVENT_SCRIPT:WaitForChild("Comet"):Clone()
-    comet:PivotTo(startCFrame)
+    task.spawn(function()
+        local animalPos = getAnimalPosition(animal)
+        if animalPos then
+            SoundController:PlaySound(
+                ReplicatedStorage.Sounds.Events["La Vacca Saturno Saturnita"].CommetActivation,
+                animalPos
+            )
+        end
+    end)
+
+    local comet = cometAsset:Clone()
+    comet:PivotTo(cometStart)
     comet.Parent = workspace
 
     local elapsed  = 0
     local cometConn
 
     cometConn = RunService.PreRender:Connect(function(dt)
-        if not cometConn or not cometConn.Connected then return end
+        if not (cometConn and cometConn.Connected) then return end
 
+        debug.profilebegin("La Vacca Commet Hit")
         elapsed += dt
+
         local animalPos = getAnimalPosition(animal)
         if not animalPos then
-            cometConn:Disconnect()
-            comet:Destroy()
+            debug.profileend()
             return
         end
 
+        local targetCFrame = CFrame.new(animalPos)
         local t = math.clamp(elapsed / COMET_TRAVEL_TIME, 0, 1)
-        comet:PivotTo(startCFrame:Lerp(CFrame.new(animalPos), t))
+        comet:PivotTo(cometStart:Lerp(targetCFrame, t))
 
         if t >= 1 then
             cometConn:Disconnect()
 
-            SoundController:PlaySound(
-                ReplicatedStorage.Sounds.Events["La Vacca Saturno Saturnita"].CommetHit,
-                animalPos
-            )
-
-            if (currentCamera.CFrame.Position - animalPos).Magnitude <= SHAKE_RANGE then
+            if (currentCamera.CFrame.Position - targetCFrame.Position).Magnitude <= SHAKE_RANGE then
                 local shake = ShakePresets.Bump:Clone()
                 eventTrove:Add(shake)
                 shake.Sustain = true
@@ -125,14 +128,25 @@ local function fireComet(animal: Model)
                 end))
             end
 
-            ClientEventUtils.playBurst(burstAsset, animal.PrimaryPart, {
-                ReplicatedStorage.Sounds.Events["La Vacca Saturno Saturnita"].CommetHit,
+            ClientEventUtils.playBurst(burstAsset, animal, {
+                ReplicatedStorage.Sounds.Events["La Vacca Saturno Saturnita"].CommetHit
             })
+
+            for _, v in comet:GetDescendants() do
+                if v:IsA("BasePart") then
+                    v.Transparency = 1
+                elseif v:IsA("ParticleEmitter") then
+                    v.Enabled = false
+                    v:Clear()
+                end
+            end
 
             task.delay(BURST_CLEANUP, function()
                 comet:Destroy()
             end)
         end
+
+        debug.profileend()
     end)
 
     eventTrove:Add(cometConn)
