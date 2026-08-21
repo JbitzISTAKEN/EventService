@@ -20,8 +20,8 @@ local WITCH_HAT_TRAIT  = "Witch Hat"
 local PROJECTILE_SPEED = 50
 local INITIAL_DELAY    = 1
 local COOLDOWN_TIME    = 15
-local ATTACK_MIN       = 6
-local ATTACK_MAX       = 12
+local ATTACK_MIN       = 60   -- matches server: math.random(60, 120) / 10
+local ATTACK_MAX       = 120
 
 -- ─── Asset resolution ─────────────────────────────────────────────────────────
 
@@ -30,7 +30,6 @@ local EventFolder = ReplicatedStorage.Controllers.EventController.Events["Witchi
 -- ─── Wait for event ───────────────────────────────────────────────────────────
 
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
-local eventData = EventController:GetActiveEventData(EVENT_NAME)
 
 -- ─── State ────────────────────────────────────────────────────────────────────
 
@@ -61,8 +60,6 @@ local function hasWitchHat(animal: Model): boolean
     return set[WITCH_HAT_TRAIT] == true
 end
 
--- ─── Trait grant ──────────────────────────────────────────────────────────────
-
 local function grantWitchHat(animal: Model)
     if not animal or not animal.Parent then return end
     local traits, set = getTraits(animal)
@@ -71,18 +68,18 @@ local function grantWitchHat(animal: Model)
     animal:SetAttribute("Traits", HttpService:JSONEncode(traits))
 end
 
--- ─── Burst ────────────────────────────────────────────────────────────────────
+-- ─── Burst — 1:1 to original OnClientEvent handler (doc 9 v_u_19) ────────────
 
-local function doBurst(animal: Model)
-    local animalData = AnimalController:GetAnimals()[animal.Name]
+local function doBurst(animalName: string)
+    local animalData = AnimalController:GetAnimals()[animalName]
+    if not animalData then return end
+
+    local mdl = animalData.AnimalModel
     local pos: Vector3
-    if animalData then
-        local mdl = animalData.AnimalModel
-        pos = (mdl.PrimaryPart and mdl.PrimaryPart.CFrame.Position)
-            or mdl:GetPivot().Position
+    if mdl.PrimaryPart then
+        pos = mdl.PrimaryPart.CFrame.Position
     else
-        pos = animal.PrimaryPart and animal.PrimaryPart.Position
-            or Vector3.new(0, 0, 0)
+        pos = mdl:GetPivot().Position
     end
 
     task.spawn(function()
@@ -97,23 +94,31 @@ local function doBurst(animal: Model)
     burst.Anchored = false
     local weld  = Instance.new("WeldConstraint")
     weld.Part0  = burst
-    weld.Part1  = animal.PrimaryPart
+    weld.Part1  = mdl.PrimaryPart
     weld.Parent = burst
     burst.Parent = workspace
     VFX.emit(burst)
-    task.delay(5, function() burst:Destroy() end)
+    task.delay(5, function()
+        burst:Destroy()
+    end)
 end
 
--- ─── Projectile ───────────────────────────────────────────────────────────────
+-- ─── Projectile — 1:1 to original OnClientEvent handler (doc 9 v_u_18) ───────
+-- Fix: projTrove extended from eventTrove owns both conn + projectile part.
+-- eventTrove:Destroy() on event end cascades into every in-flight projTrove,
+-- killing the connection AND the part — no orphaned projectiles in workspace.
 
 local function fireProjectile(
-    targetAnimal   : Model,
-    startServerTime: number,
+    animalName     : string,
+    initialDelay   : number,
     travelTime     : number,
+    startServerTime: number,
     candidateCount : number
 )
     local sammy = witchModel:FindFirstChild("Sammy")
     if not sammy then return end
+
+    local projTrove = eventTrove:Extend()
 
     local shootAnim = sammy.Humanoid.Animator:LoadAnimation(EventFolder.Shoot)
     shootAnim.Looped = false
@@ -123,35 +128,36 @@ local function fireProjectile(
         shootAnim:Destroy()
     end)
 
-    local projectile    = EventFolder.Projectile:Clone()
-    local launchCF      = sammy["Cylinder.001"].Attachment.WorldCFrame
-    local appeared      = false
-    local conn: RBXScriptConnection
+    local projectile = EventFolder.Projectile:Clone()
+    projTrove:Add(projectile)  -- projectile destroyed if event ends mid-flight
 
-    local flightEnd     = startServerTime + INITIAL_DELAY + travelTime
-    local clampedSpread = math.min(candidateCount * 0.5, 50)
+    local launchCF  = sammy["Cylinder.001"].Attachment.WorldCFrame
+    local appeared  = false
+    local flightEnd = startServerTime + initialDelay + travelTime
 
-    local rng = Random.new()
-    local v43 = rng:NextUnitVector() * (rng:NextInteger(0, 1) * 2 - 1) * clampedSpread * 0.65
-    local cp1Offset = Vector3.new(v43.X, rng:NextNumber(-2, 7) * (clampedSpread / 50), v43.Z)
-    local v44 = rng:NextUnitVector() * (rng:NextInteger(0, 1) * 2 - 1) * clampedSpread
-    local cp2Offset = Vector3.new(v44.X, rng:NextNumber(-2, 7) * (clampedSpread / 50), v44.Z)
+    -- spread calc — 1:1 to original (doc 9 lines v37-v_u_48)
+    local spread     = math.min(candidateCount * 0.5, 50)
+    local rng        = Random.new()
+    local v43        = rng:NextUnitVector() * (rng:NextInteger(0, 1) * 2 - 1) * spread * 0.65
+    local cp1Offset  = Vector3.new(v43.X, rng:NextNumber(-2, 7) * (spread / 50), v43.Z)
+    local v44        = rng:NextUnitVector() * (rng:NextInteger(0, 1) * 2 - 1) * spread
+    local cp2Offset  = Vector3.new(v44.X, rng:NextNumber(-2, 7) * (spread / 50), v44.Z)
     if candidateCount <= 15 then
         cp1Offset = Vector3.new(0, 0, 0)
         cp2Offset = Vector3.new(0, 0, 0)
     end
 
+    local conn
     conn = RunService.PreRender:Connect(function()
         local now       = workspace:GetServerTimeNow()
         local remaining = math.max(flightEnd - now, 0)
-        local t = now < (startServerTime + INITIAL_DELAY)
+        local t = now < (startServerTime + initialDelay)
             and 0
             or 1 - remaining / travelTime
         t = math.clamp(t, 0, 1)
 
         if t >= 1 then
-            conn:Disconnect()
-            projectile:Destroy()
+            projTrove:Destroy()  -- kills conn + projectile part cleanly
             return
         end
 
@@ -168,12 +174,15 @@ local function fireProjectile(
         end
 
         local origin     = launchCF.Position
-        local animalData = AnimalController:GetAnimals()[targetAnimal.Name]
+        local animalData = AnimalController:GetAnimals()[animalName]
         local targetPos: Vector3
         if animalData then
             local mdl = animalData.AnimalModel
-            targetPos = (mdl.PrimaryPart and mdl.PrimaryPart.CFrame.Position)
-                or mdl:GetPivot().Position
+            if mdl.PrimaryPart then
+                targetPos = mdl.PrimaryPart.CFrame.Position
+            else
+                targetPos = mdl:GetPivot().Position
+            end
         else
             targetPos = Vector3.new(0, 0, 0)
         end
@@ -188,6 +197,7 @@ local function fireProjectile(
             )
         )
 
+        -- waist aim — 1:1 to original (doc 9 v60-v71)
         local waist = sammy.UpperTorso.Waist
         local c0    = waist:GetAttribute("C0")
         if not c0 then
@@ -205,16 +215,17 @@ local function fireProjectile(
         end
     end)
 
-    eventTrove:Add(conn)
+    projTrove:Add(conn)  -- conn also owned — disconnects on projTrove:Destroy()
 end
 
 -- ─── Main ─────────────────────────────────────────────────────────────────────
 
 local function main()
-    -- Attack loop
     eventTrove:Add(task.spawn(function()
         while isActive do
-            task.wait(math.random(ATTACK_MIN * 10, ATTACK_MAX * 10) / 10)
+            -- 1:1 to server: math.random(60, 120) / 10
+            local waitTime = math.random(ATTACK_MIN, ATTACK_MAX) / 10
+            task.wait(waitTime)
             if not isActive then break end
 
             local now = workspace:GetServerTimeNow()
@@ -246,21 +257,20 @@ local function main()
 
             recentlyTargeted[selected.Name] = fireTime
 
-            fireProjectile(selected, fireTime, travelTime, #candidates)
+            fireProjectile(selected.Name, INITIAL_DELAY, travelTime, fireTime, #candidates)
 
             task.delay(totalWait, function()
                 if not isActive or not selected.Parent then return end
-                doBurst(selected)
+                doBurst(selected.Name)
                 grantWitchHat(selected)
             end)
         end
     end))
 
-    -- Cleanup watchdog
     while EventController:GetActiveEventData(EVENT_NAME) do task.wait(1) end
     isActive = false
     witchModel:PivotTo(CFrame.new(0, 100000, 0))
-    eventTrove:Destroy()
+    eventTrove:Destroy()  -- cascades into all in-flight projTroves
     table.clear(recentlyTargeted)
 end
 
