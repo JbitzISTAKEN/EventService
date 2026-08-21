@@ -11,6 +11,7 @@ local ClientEventUtils = require(ReplicatedStorage.Controllers.EventController.C
 local SoundController  = require(ReplicatedStorage.Controllers.SoundController)
 local ShakePresets     = require(ReplicatedStorage.Shared.ShakePresets)
 local MapInformation   = require(ReplicatedStorage.Shared.MapInformation)
+local SharedEventUtils = require(ReplicatedStorage.Shared.SharedEventUtils)
 
 local EVENT_NAME   = "La Vacca Saturno Saturnita"
 local EVENT_SCRIPT = ReplicatedStorage:WaitForChild("Controllers")
@@ -20,7 +21,7 @@ local EVENT_SCRIPT = ReplicatedStorage:WaitForChild("Controllers")
 
 -- ─── Constants (1:1 server) ───────────────────────────────────────────────────
 
-local BLOCKING_TRAIT   = "Galactic"
+local BLOCKING_TRAIT    = "Galactic"
 local COMET_TRAVEL_TIME = 1
 local COMET_HEIGHT      = 200
 local SHAKE_RANGE       = 70
@@ -66,33 +67,24 @@ local function hasBlockingTrait(animal: Model): boolean
     return set[BLOCKING_TRAIT] == true
 end
 
-local function getAnimalPosition(animal: Model): Vector3?
-    if not animal or not animal.PrimaryPart then return nil end
-    return animal.PrimaryPart.Position + Vector3.new(0, animal:GetExtentsSize().Y * 0.5, 0)
-end
-
 -- ─── Comet ────────────────────────────────────────────────────────────────────
 
-local function fireComet(animal: Model)
+local function fireComet(animalName: string, animal: Model)
     if not animal or not animal.PrimaryPart then return end
 
-    local cometStart = CFrame.new(
-        (ReplicatedStorage:GetAttribute("LaVaccaCenter") or MapInformation.MapCenter.Position)
+    local cometStartPos = (ReplicatedStorage:GetAttribute("LaVaccaCenter") or MapInformation.MapCenter.Position)
         + Vector3.new(0, COMET_HEIGHT, 0)
-    )
+    local startCFrame = CFrame.new(cometStartPos)
 
     task.spawn(function()
-        local animalPos = getAnimalPosition(animal)
-        if animalPos then
-            SoundController:PlaySound(
-                ReplicatedStorage.Sounds.Events["La Vacca Saturno Saturnita"].CommetActivation,
-                animalPos
-            )
-        end
+        SoundController:PlaySound(
+            ReplicatedStorage.Sounds.Events["La Vacca Saturno Saturnita"].CommetActivation,
+            ClientEventUtils.getAnimalPosition(animalName)
+        )
     end)
 
     local comet = cometAsset:Clone()
-    comet:PivotTo(cometStart)
+    comet:PivotTo(startCFrame)
     comet.Parent = workspace
 
     local elapsed  = 0
@@ -104,15 +96,15 @@ local function fireComet(animal: Model)
         debug.profilebegin("La Vacca Commet Hit")
         elapsed += dt
 
-        local animalPos = getAnimalPosition(animal)
-        if not animalPos then
+        local animalPos = ClientEventUtils.getAnimalPosition(animalName)
+        if not animalPos or animalPos == Vector3.zero then
             debug.profileend()
             return
         end
 
         local targetCFrame = CFrame.new(animalPos)
         local t = math.clamp(elapsed / COMET_TRAVEL_TIME, 0, 1)
-        comet:PivotTo(cometStart:Lerp(targetCFrame, t))
+        comet:PivotTo(startCFrame:Lerp(targetCFrame, t))
 
         if t >= 1 then
             cometConn:Disconnect()
@@ -128,7 +120,7 @@ local function fireComet(animal: Model)
                 end))
             end
 
-            ClientEventUtils.playBurst(burstAsset, animal, {
+            ClientEventUtils.playBurst(burstAsset, animalName, {
                 ReplicatedStorage.Sounds.Events["La Vacca Saturno Saturnita"].CommetHit
             })
 
@@ -144,6 +136,9 @@ local function fireComet(animal: Model)
             task.delay(BURST_CLEANUP, function()
                 comet:Destroy()
             end)
+
+            debug.profileend()
+            return
         end
 
         debug.profileend()
@@ -173,7 +168,6 @@ local function main()
         end
     end))
 
-    -- Attack loop
     eventTrove:Add(task.spawn(function()
         while isActive do
             task.wait(rng:NextNumber(ATTACK_LOOP_MIN, ATTACK_LOOP_MAX))
@@ -191,6 +185,7 @@ local function main()
                 if animal.PrimaryPart
                     and not recentlyTargeted[animal.Name]
                     and not hasBlockingTrait(animal)
+                    and SharedEventUtils.isPointInCarpet(animal.PrimaryPart.Position)
                 then
                     table.insert(candidates, animal)
                 end
@@ -199,8 +194,8 @@ local function main()
             if #candidates == 0 then continue end
 
             local selected = candidates[rng:NextInteger(1, #candidates)]
-            recentlyTargeted[selected.Name] = currentTime
-            fireComet(selected)
+            recentlyTargeted[selected.Name] = workspace:GetServerTimeNow()
+            fireComet(selected.Name, selected)
         end
     end))
 
