@@ -8,13 +8,11 @@ local Players           = game:GetService("Players")
 if not game:IsLoaded() then game.Loaded:Wait() end
 
 local MathUtils         = require(ReplicatedStorage.Utils.MathUtils)
-local AnimalController  = require(ReplicatedStorage.Controllers.AnimalController)
 local SoundController   = require(ReplicatedStorage.Controllers.SoundController)
 local EventController   = require(ReplicatedStorage.Controllers.EventController)
 local ClientEventUtils  = require(ReplicatedStorage.Controllers.EventController.ClientEventUtils)
 local CreateTween       = require(ReplicatedStorage.Packages.CreateTween)
 local Trove             = require(ReplicatedStorage.Packages.Trove)
-local VFX               = require(ReplicatedStorage.Shared.VFX)
 local SharedEventUtils  = require(ReplicatedStorage.Shared.SharedEventUtils)
 
 -- ─── Constants ────────────────────────────────────────────────────────────────
@@ -26,24 +24,25 @@ local STRIKE_RANGE    = 50
 local STRIKE_MIN      = 6
 local STRIKE_MAX      = 12
 local STRIKE_DELAY    = 0.5
+local CLAIM_COOLDOWN  = 0.2
+local CLAIM_ARC_TIME  = 0.4
 
-local MAP_DROP_INTERVAL  = 5
-local MAP_DROP_AMOUNT    = { 3, 8 }
-local CANDY_FALL_TIME    = 1.5
-local CANDY_BOB_SPEED    = 4
-local CANDY_BOB_HEIGHT   = 0.5
-local CANDY_BOB_OFFSET   = 4
-local CLAIM_COOLDOWN     = 0.2
-local CLAIM_ARC_TIME     = 0.4
+local MAP_DROP_INTERVAL = 5
+local MAP_DROP_AMOUNT   = { 3, 8 }
+local CANDY_DROP_HEIGHT = 20
+local CANDY_FALL_TIME   = 1.5
+local CANDY_BOB_SPEED   = 4
+local CANDY_BOB_HEIGHT  = 0.5
+local CANDY_BOB_OFFSET  = 4
 
-local RaycastParams = RaycastParams.new()
-RaycastParams.FilterType = Enum.RaycastFilterType.Include
-RaycastParams.FilterDescendantsInstances = { workspace.Map }
+local CandyRayParams = RaycastParams.new()
+CandyRayParams.FilterType = Enum.RaycastFilterType.Include
+CandyRayParams.FilterDescendantsInstances = { workspace.Map }
 
 -- ─── Asset resolution ─────────────────────────────────────────────────────────
 
-local EventFolder  = ReplicatedStorage.Controllers.EventController.Events["Winter Hour"]
-local LocalPlayer  = Players.LocalPlayer
+local EventFolder = ReplicatedStorage.Controllers.EventController.Events["Winter Hour"]
+local LocalPlayer = Players.LocalPlayer
 
 -- ─── Wait for event ───────────────────────────────────────────────────────────
 
@@ -54,7 +53,7 @@ repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
 local eventTrove       = Trove.new()
 local isActive         = true
 local recentlyTargeted = {}
-local candyCanes       = {}   -- [id] = model
+local candyCanes       = {}
 local candyCaneCounter = 0
 
 local winterModel = workspace:WaitForChild("Events")
@@ -81,6 +80,14 @@ local function hasSantaHat(animal)
     return set[SANTA_HAT_TRAIT] == true
 end
 
+local function grantSantaHat(animal)
+    if not animal or not animal.Parent then return end
+    local traits, set = getTraits(animal)
+    if set[SANTA_HAT_TRAIT] then return end
+    table.insert(traits, SANTA_HAT_TRAIT)
+    animal:SetAttribute("Traits", HttpService:JSONEncode(traits))
+end
+
 local function getAnimator()
     local sammy = winterModel:FindFirstChild("Sammy")
     if not sammy then return nil end
@@ -97,7 +104,6 @@ end
 local function getRandomMapPosition()
     local map = workspace:FindFirstChild("Map")
     if not map then return Vector3.new(0, 50, 0) end
-
     local groundParts = {}
     for _, obj in ipairs(map:GetDescendants()) do
         if obj:IsA("BasePart")
@@ -106,24 +112,19 @@ local function getRandomMapPosition()
             table.insert(groundParts, obj)
         end
     end
-
     if #groundParts == 0 then
         for _, obj in ipairs(map:GetDescendants()) do
-            if obj:IsA("BasePart") then
-                table.insert(groundParts, obj)
-            end
+            if obj:IsA("BasePart") then table.insert(groundParts, obj) end
         end
     end
-
     if #groundParts == 0 then return Vector3.new(0, 50, 0) end
-
     local part  = groundParts[math.random(1, #groundParts)]
     local size  = part.Size
     local pos   = part.Position
     local rx    = pos.X + math.random(-size.X / 2, size.X / 2)
     local rz    = pos.Z + math.random(-size.Z / 2, size.Z / 2)
     local above = Vector3.new(rx, pos.Y + 50, rz)
-    local ray   = workspace:Raycast(above, Vector3.new(0, -100, 0), RaycastParams)
+    local ray   = workspace:Raycast(above, Vector3.new(0, -100, 0), CandyRayParams)
     return ray and ray.Position or above
 end
 
@@ -157,8 +158,6 @@ local function playSequenceAnimation()
     end)
 end
 
--- ─── Santa hat visibility ─────────────────────────────────────────────────────
-
 local function setSantaHatVisibility(visible)
     local sammy = winterModel:FindFirstChild("Sammy")
     if not sammy then return end
@@ -171,16 +170,6 @@ local function setSantaHatVisibility(visible)
     end
 end
 
--- ─── Trait grant ──────────────────────────────────────────────────────────────
-
-local function grantSantaHat(animal)
-    if not animal or not animal.Parent then return end
-    local traits, set = getTraits(animal)
-    if set[SANTA_HAT_TRAIT] then return end
-    table.insert(traits, SANTA_HAT_TRAIT)
-    animal:SetAttribute("Traits", HttpService:JSONEncode(traits))
-end
-
 -- ─── Burst ────────────────────────────────────────────────────────────────────
 
 local function doBurst(animal)
@@ -189,20 +178,19 @@ local function doBurst(animal)
     })
 end
 
--- ─── Candy cane reward animation (mirrors ClaimCandyCane handler) ─────────────
+-- ─── Candy cane claim animation ───────────────────────────────────────────────
 
 local function playCharacterAnimation(player, amount)
     local character = player.Character
     if not character then return end
     local hrp = character:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
-
     local clone = EventFolder.Reward:Clone()
     clone.CurrencyCandyCane.Text = "+" .. amount
     clone.Parent = hrp
-    TweenService:Create(clone, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {
-        StudsOffset = Vector3.new(0, 2.5, 2.2)
-    }):Play()
+    TweenService:Create(clone,
+        TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
+        { StudsOffset = Vector3.new(0, 2.5, 2.2) }):Play()
     TweenService:Create(clone.ImageLabel.ImageLabel,
         TweenInfo.new(1.5, Enum.EasingStyle.Quint, Enum.EasingDirection.Out, 0, false, 1.5),
         { ImageTransparency = 1 }):Play()
@@ -238,12 +226,11 @@ local function playScreenCandyCaneAnimation(amount)
     end
 end
 
--- ─── Candy cane claim (local, mirrors ClaimCandyCane remote handler) ──────────
+-- ─── Candy cane claim ─────────────────────────────────────────────────────────
 
 local function claimCandyCane(id, amount)
     local model = candyCanes[id]
     if not model then return end
-
     local clone = model:Clone()
     model:Destroy()
     candyCanes[id] = nil
@@ -252,23 +239,18 @@ local function claimCandyCane(id, amount)
     local startPos = clone:GetPivot().Position
     local elapsed  = 0
     local conn
-
     conn = eventTrove:Add(RunService.PostSimulation:Connect(function(dt)
-        debug.profilebegin("Winter Hour:ClaimCandyCaneAnim")
+        debug.profilebegin("Winter Hour:ClaimAnim")
         elapsed = elapsed + dt
-
-        local player  = LocalPlayer
-        local charPos = player.Character and player.Character:GetPivot().Position
+        local charPos = LocalPlayer.Character and LocalPlayer.Character:GetPivot().Position
             or Vector3.new(0, 0, 0)
-        local midPos  = startPos + (charPos - startPos) * 0.25 + Vector3.new(0, 10, 0)
-        local t       = TweenService:GetValue(
+        local midPos = startPos + (charPos - startPos) * 0.25 + Vector3.new(0, 10, 0)
+        local t = TweenService:GetValue(
             math.clamp(elapsed / CLAIM_ARC_TIME, 0, 1),
             Enum.EasingStyle.Sine,
             Enum.EasingDirection.In
         )
-
         clone:PivotTo(CFrame.new(MathUtils.quadBezier(t, startPos, midPos, charPos)))
-
         if t >= 1 then
             eventTrove:Remove(conn)
             clone:Destroy()
@@ -279,9 +261,8 @@ local function claimCandyCane(id, amount)
                 )
             end)
             playScreenCandyCaneAnimation(amount)
-            playCharacterAnimation(player, amount)
+            playCharacterAnimation(LocalPlayer, amount)
         end
-
         debug.profileend()
     end))
 end
@@ -293,20 +274,20 @@ local function spawnCandyCane(spawnPos, landPos, amount)
     local id = tostring(candyCaneCounter)
 
     local clone = EventFolder.Drop:Clone()
-    clone.Name  = id
+    clone.Name   = id
     candyCanes[id] = clone
     clone.Parent = workspace
 
     local prompt = Instance.new("ProximityPrompt")
-    prompt.Name                  = "ProximityPrompt"
-    prompt.ActionText            = ""
-    prompt.RequiresLineOfSight   = false
-    prompt.Enabled               = false
-    prompt.Style                 = Enum.ProximityPromptStyle.Custom
+    prompt.Name                = "ProximityPrompt"
+    prompt.ActionText          = ""
+    prompt.RequiresLineOfSight = false
+    prompt.Enabled             = false
+    prompt.Style               = Enum.ProximityPromptStyle.Custom
     prompt:SetAttribute("CustomStyleDisabled", true)
     prompt.Parent = clone
 
-    local rayResult = workspace:Raycast(landPos + Vector3.new(0, 10, 0), Vector3.new(0, -30, 0), RaycastParams)
+    local rayResult = workspace:Raycast(landPos + Vector3.new(0, 10, 0), Vector3.new(0, -30, 0), CandyRayParams)
     local finalPos  = rayResult and rayResult.Position or landPos
     local midPos    = spawnPos + (finalPos - spawnPos) * 0.5
     local bobSeed   = math.random(0, 10000)
@@ -317,16 +298,17 @@ local function spawnCandyCane(spawnPos, landPos, amount)
     local conn
     conn = eventTrove:Add(RunService.PostSimulation:Connect(function()
         debug.profilebegin("Winter Hour:CandyCaneUpdate")
-
         local elapsed = workspace:GetServerTimeNow() - fireTime
         local raw     = CANDY_FALL_TIME ~= 0 and math.clamp(elapsed / CANDY_FALL_TIME, 0, 1) or 1
         local t       = TweenService:GetValue(raw, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
         local basePos = MathUtils.quadBezier(t, spawnPos, midPos, finalPos)
-
         clone:PivotTo(CFrame.new(
-            basePos + Vector3.new(0, math.sin((os.clock() + bobSeed) * CANDY_BOB_SPEED) * CANDY_BOB_HEIGHT + CANDY_BOB_OFFSET, 0)
+            basePos + Vector3.new(
+                0,
+                math.sin((os.clock() + bobSeed) * CANDY_BOB_SPEED) * CANDY_BOB_HEIGHT + CANDY_BOB_OFFSET,
+                0
+            )
         ))
-
         if t >= 1 then
             prompt.Enabled = true
             local now = os.clock()
@@ -336,7 +318,6 @@ local function spawnCandyCane(spawnPos, landPos, amount)
                 eventTrove:Remove(conn)
             end
         end
-
         debug.profileend()
     end))
 
@@ -349,13 +330,6 @@ local function spawnCandyCane(spawnPos, landPos, amount)
     prompt.PromptHidden:Connect(function() promptActive = false end)
 end
 
-local function destroyCandyCane(id)
-    local model = candyCanes[id]
-    if not model then return end
-    model:Destroy()
-    candyCanes[id] = nil
-end
-
 -- ─── Main ─────────────────────────────────────────────────────────────────────
 
 local function main()
@@ -363,7 +337,7 @@ local function main()
     setupIdleAnimation()
     setSantaHatVisibility(true)
 
-    -- Strike loop
+    -- Strike loop — 1:1 to server STRIKE_INTERVAL, closest animal in range
     eventTrove:Add(task.spawn(function()
         while isActive do
             task.wait(math.random(STRIKE_MIN * 10, STRIKE_MAX * 10) / 10)
@@ -398,10 +372,7 @@ local function main()
             end
 
             if not closestAnimal then continue end
-
-            if not closestAnimal.PrimaryPart
-                or not SharedEventUtils.isPointInCarpet(closestAnimal.PrimaryPart.Position)
-            then
+            if not SharedEventUtils.isPointInCarpet(closestAnimal.PrimaryPart.Position) then
                 continue
             end
 
@@ -416,12 +387,11 @@ local function main()
         end
     end))
 
-    -- Candy cane map drop loop
+    -- Map candy drop loop — 1:1 to server MAP_DROP_INTERVAL
     eventTrove:Add(task.spawn(function()
         while isActive do
             task.wait(MAP_DROP_INTERVAL)
             if not isActive then break end
-
             local landPos  = getRandomMapPosition()
             local spawnPos = landPos + Vector3.new(0, CANDY_DROP_HEIGHT, 0)
             local amount   = math.random(MAP_DROP_AMOUNT[1], MAP_DROP_AMOUNT[2])
@@ -436,7 +406,7 @@ local function main()
     if hatIdleAnim  then hatIdleAnim:Stop()  end
     if sequenceAnim then sequenceAnim:Stop() end
     winterModel:PivotTo(CFrame.new(0, 100000, 0))
-    for id, model in pairs(candyCanes) do
+    for _, model in pairs(candyCanes) do
         if model then model:Destroy() end
     end
     table.clear(candyCanes)
