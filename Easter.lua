@@ -278,6 +278,9 @@ local function main()
 		easterModel:PivotTo(CFrame.new(-381.109, -9.5, -17.394))
 	end
 
+	-- kick the NPC animation on
+	ReplicatedStorage:SetAttribute("EasterNPCEvent", true)
+
 	for _ = 1, TOTAL_BUNNIES do
 		local wp = getRandomWanderPart()
 		if wp then spawnBunny(wp) end
@@ -345,6 +348,9 @@ local function main()
 	isActive = false
 	eventTrove:Destroy()
 	table.clear(spawnedBunnies)
+
+	-- kill the NPC animation
+	ReplicatedStorage:SetAttribute("EasterNPCEvent", false)
 
 	local easterModelEnd = getEasterModel()
 	if easterModelEnd then
