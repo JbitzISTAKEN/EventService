@@ -13,8 +13,6 @@ local TRAIT_NAME  = "Bunny Ears"
 
 local WANDER_FOLDER = workspace:WaitForChild("Events"):WaitForChild("Wander")
 
--- ─── Constants ────────────────────────────────────────────────────────────────
-
 local TOTAL_BUNNIES       = math.random(6, 10)
 local HOP_SPEED           = 18
 local BUNNY_SCALE         = 1
@@ -29,19 +27,13 @@ local RETIRE_WAIT         = 2
 local WANDER_INTERVAL     = 2.5
 local WANDER_CHANCE       = 0.65
 
--- ─── Wait for event ───────────────────────────────────────────────────────────
-
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
 local eventData = EventController:GetActiveEventData(EVENT_NAME)
 local startedAt = eventData.startedAt
 
--- ─── State ────────────────────────────────────────────────────────────────────
-
 local eventTrove     = Trove.new()
 local spawnedBunnies = {}
 local isActive       = true
-
--- ─── Helpers ──────────────────────────────────────────────────────────────────
 
 local function stickToGround(position: Vector3): Vector3
 	local params = RaycastParams.new()
@@ -101,8 +93,6 @@ local function removeFromList(bunny)
 	end
 end
 
--- ─── Bunny model ──────────────────────────────────────────────────────────────
-
 local function createBunny(position: Vector3): Model
 	local model = Instance.new("Model")
 	model.Name  = "EasterBunny"
@@ -124,8 +114,6 @@ local function createBunny(position: Vector3): Model
 	model.Parent = workspace
 	return model
 end
-
--- ─── Wander ───────────────────────────────────────────────────────────────────
 
 local function wander(bunny)
 	if not bunny.Model or not bunny.Model.Parent then return end
@@ -171,8 +159,6 @@ local function wander(bunny)
 	end))
 end
 
--- ─── Retire + respawn ─────────────────────────────────────────────────────────
-
 local spawnBunny
 
 local function retireAndRespawn(bunny)
@@ -186,8 +172,6 @@ local function retireAndRespawn(bunny)
 		if wp then spawnBunny(wp) end
 	end))
 end
-
--- ─── Jump + give trait ────────────────────────────────────────────────────────
 
 local function jumpAndGiveTrait(bunny, targetAnimal: Model)
 	if not bunny.Model or not bunny.Model.Parent then return end
@@ -250,8 +234,6 @@ local function jumpAndGiveTrait(bunny, targetAnimal: Model)
 	end))
 end
 
--- ─── Spawn ────────────────────────────────────────────────────────────────────
-
 spawnBunny = function(homePart: BasePart)
 	if not isActive or not homePart then return end
 
@@ -279,13 +261,22 @@ spawnBunny = function(homePart: BasePart)
 	return bunny
 end
 
--- ─── Main ─────────────────────────────────────────────────────────────────────
+local function getEasterModel()
+	return workspace:FindFirstChild("Events")
+		and workspace.Events:FindFirstChild("Easter")
+		and workspace.Events.Easter:FindFirstChild("Model")
+end
 
 local function main()
 	local elapsed   = workspace:GetServerTimeNow() - startedAt
 	local remaining = math.max(0, 0 - elapsed)
 	if remaining > 0 then task.wait(remaining) end
 	if not isActive then return end
+
+	local easterModel = getEasterModel()
+	if easterModel then
+		easterModel:PivotTo(CFrame.new(-381.109, -9.5, -17.394))
+	end
 
 	for _ = 1, TOTAL_BUNNIES do
 		local wp = getRandomWanderPart()
@@ -297,18 +288,16 @@ local function main()
 		return
 	end
 
-	-- Live animal cache
 	local cachedAnimals = CollectionService:GetTagged("Animal")
 	eventTrove:Add(CollectionService:GetInstanceAddedSignal("Animal"):Connect(function(inst)
 		table.insert(cachedAnimals, inst)
 	end))
 	eventTrove:Add(CollectionService:GetInstanceRemovedSignal("Animal"):Connect(function(inst)
 		for i = #cachedAnimals, 1, -1 do
-			if cachedAnimals[i] == inst then table.remove(cachedAnimals, i) break end
+			if cachedAnimals[i] == inst then table.remove(cachedAnimals, i); break end
 		end
 	end))
 
-	-- Wander tick
 	eventTrove:Add(task.spawn(function()
 		while isActive do
 			task.wait(WANDER_INTERVAL)
@@ -324,7 +313,6 @@ local function main()
 		end
 	end))
 
-	-- Attack tick
 	eventTrove:Add(task.spawn(function()
 		while isActive do
 			task.wait(math.random(ATTACK_COOLDOWN_MIN, ATTACK_COOLDOWN_MAX))
@@ -353,11 +341,15 @@ local function main()
 		end
 	end))
 
-	-- Cleanup watchdog
 	while EventController:GetActiveEventData(EVENT_NAME) do task.wait(1) end
 	isActive = false
 	eventTrove:Destroy()
 	table.clear(spawnedBunnies)
+
+	local easterModelEnd = getEasterModel()
+	if easterModelEnd then
+		easterModelEnd:PivotTo(CFrame.new(0, -500, 0))
+	end
 end
 
 task.spawn(main)
