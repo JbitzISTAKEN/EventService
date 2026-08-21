@@ -9,9 +9,9 @@ local Trove            = require(ReplicatedStorage.Packages.Trove)
 local EventController  = require(ReplicatedStorage.Controllers.EventController)
 local ClientEventUtils = require(ReplicatedStorage.Controllers.EventController.ClientEventUtils)
 
-local EVENT_NAME             = "Eid"
-local TAG_NAME               = "EidBalloon"
-local EVENT_SCRIPT           = ReplicatedStorage.Controllers.EventController.Events.Eid
+local EVENT_NAME  = "Eid"
+local TAG_NAME    = "EidBalloon"
+local EVENT_SCRIPT = ReplicatedStorage.Controllers.EventController.Events.Eid
 
 local BALLOON_COUNT          = 10
 local BALLOON_SPEED          = 14
@@ -218,7 +218,9 @@ local function attackAnimal(balloon: Part)
 
         connection = RunService.Heartbeat:Connect(function(dt)
             local targetLost = not selected.Parent or not selected.PrimaryPart
-            if not isActive or targetLost or (os.clock() - chaseStart) > 20 or not balloon.Parent then
+            if not isActive or targetLost or hasTrait(selected, traitName)
+                or (os.clock() - chaseStart) > 20 or not balloon.Parent
+            then
                 connection:Disconnect()
                 return
             end
@@ -271,6 +273,7 @@ local function attackAnimal(balloon: Part)
             return
         end
 
+        -- target lost or chase timeout — balloon survives, picks new target next cycle
         if selected and selected.Parent then
             selected:SetAttribute("TargetedByBalloon", nil)
         end
