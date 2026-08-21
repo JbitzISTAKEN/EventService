@@ -20,8 +20,6 @@ local EVENT_SCRIPT = ReplicatedStorage:WaitForChild("Controllers")
     :WaitForChild("Events")
     :WaitForChild("Raining Tacos")
 
--- ─── Constants (1:1 server) ───────────────────────────────────────────────────
-
 local BLOCKING_TRAIT  = "Taco"
 local TRAVEL_TIME     = 2.5
 local COOLDOWN_WINDOW = 20
@@ -33,11 +31,7 @@ local MULTI_SHOT_CHANCES = {
     { shots = 1, chance = 1.00 },
 }
 
--- ─── Wait for event ───────────────────────────────────────────────────────────
-
 repeat task.wait() until EventController:GetActiveEventData(EVENT_NAME)
-
--- ─── State ────────────────────────────────────────────────────────────────────
 
 local eventTrove       = Trove.new()
 local recentlyTargeted = {}
@@ -45,11 +39,13 @@ local isActive         = true
 local rng              = Random.new()
 local isTsunami        = ServerData.IsTsunamiServer()
 
--- ─── Cannon ref (already spawned by base spoofer) ────────────────────────────
+-- ─── Cannon already in workspace, just find it ───────────────────────────────
 
-local cannon = workspace:WaitForChild("Cannon", 10)
+local getPivotObj = workspace:WaitForChild("Cannon")
+local ref1 = getPivotObj.Top["Meshes/tacolauncher_Cube.004"]["Meshes/tacolauncher_Cube.003"]
+local ref2 = getPivotObj.Bottom.RootPart["Meshes/tacolauncher_Cube.004"]
 
--- ─── Springs (1:1 controller) ─────────────────────────────────────────────────
+-- ─── Springs (1:1) ───────────────────────────────────────────────────────────
 
 local springBarrel = Spring.new(0)
 springBarrel.Speed  = 6.5
@@ -60,18 +56,15 @@ springRecoil.Speed  = 9
 springRecoil.Damper = 0.6
 
 eventTrove:Add(RunService.PostSimulation:Connect(function()
-    if not cannon or not cannon.Parent then return end
     debug.profilebegin("Raining Tacos Cannon Spring")
-    local barrelPart = cannon.Top["Meshes/tacolauncher_Cube.004"]["Meshes/tacolauncher_Cube.003"]
-    local recoilPart = cannon.Bottom.RootPart["Meshes/tacolauncher_Cube.004"]
-    barrelPart.C1 = CFrame.new(springBarrel.Position, 0, 0)
-    recoilPart.C1 = CFrame.Angles(0, 0, -math.rad(springRecoil.Position))
+    ref1.C1 = CFrame.new(springBarrel.Position, 0, 0)
+    ref2.C1 = CFrame.Angles(0, 0, -math.rad(springRecoil.Position))
     debug.profileend()
 end))
 
--- ─── Helpers ──────────────────────────────────────────────────────────────────
+-- ─── Helpers ─────────────────────────────────────────────────────────────────
 
-local function getTraits(animal: Model): ({string}, {[string]: boolean})
+local function getTraits(animal)
     local json = animal:GetAttribute("Traits")
     if not json then return {}, {} end
     local ok, decoded = pcall(HttpService.JSONDecode, HttpService, json)
@@ -81,22 +74,20 @@ local function getTraits(animal: Model): ({string}, {[string]: boolean})
     return decoded, set
 end
 
-local function hasBlockingTrait(animal: Model): boolean
+local function hasBlockingTrait(animal)
     local _, set = getTraits(animal)
     return set[BLOCKING_TRAIT] == true
 end
 
-local function getShotCount(): number
+local function getShotCount()
     local roll = rng:NextNumber()
     for _, entry in ipairs(MULTI_SHOT_CHANCES) do
-        if roll <= entry.chance then
-            return entry.shots
-        end
+        if roll <= entry.chance then return entry.shots end
     end
     return 1
 end
 
-local function getValidCandidates(cachedAnimals: {Model}): {Model}
+local function getValidCandidates(cachedAnimals)
     local currentTime = workspace:GetServerTimeNow()
     for name, lastTime in pairs(recentlyTargeted) do
         if (currentTime - lastTime) > COOLDOWN_WINDOW then
@@ -115,15 +106,14 @@ local function getValidCandidates(cachedAnimals: {Model}): {Model}
     return candidates
 end
 
--- ─── Shoot ────────────────────────────────────────────────────────────────────
+-- ─── Shoot ───────────────────────────────────────────────────────────────────
 
-local function shootAnimal(animalName: string, animal: Model)
-    if not cannon or not cannon.Parent then return end
+local function shootAnimal(animalName, animal)
     if not animal or not animal.PrimaryPart then return end
     if not SharedEventUtils.isPointInCarpet(animal.PrimaryPart.Position) then return end
 
     local now      = workspace:GetServerTimeNow()
-    local shootPos = cannon.ShootPart.CFrame.Position
+    local shootPos = getPivotObj.ShootPart.CFrame.Position
 
     local taco = EVENT_SCRIPT:WaitForChild("Taco"):Clone()
     taco.Parent = workspace
@@ -131,7 +121,7 @@ local function shootAnimal(animalName: string, animal: Model)
     task.spawn(function()
         SoundController:PlaySound(
             ReplicatedStorage.Sounds.Events["Raining Tacos"].Shoot,
-            cannon:GetPivot().Position
+            getPivotObj:GetPivot().Position
         )
     end)
 
@@ -167,7 +157,6 @@ local function shootAnimal(animalName: string, animal: Model)
                 ReplicatedStorage.Sounds.Events["Raining Tacos"].Hit
             })
 
-            -- stamp trait 1:1 server delay
             local delayTrove = eventTrove:Extend()
             delayTrove:Add(task.delay(TRAIT_DELAY, function()
                 if not animal or not animal.Parent then
@@ -191,10 +180,11 @@ local function shootAnimal(animalName: string, animal: Model)
     eventTrove:Add(tacoConn)
 end
 
--- ─── Main ─────────────────────────────────────────────────────────────────────
+-- ─── Main ────────────────────────────────────────────────────────────────────
 
 local function main()
     local cachedAnimals = CollectionService:GetTagged("Animal")
+
     eventTrove:Add(CollectionService:GetInstanceAddedSignal("Animal"):Connect(function(inst)
         table.insert(cachedAnimals, inst)
     end))
@@ -209,7 +199,6 @@ local function main()
 
     eventTrove:Add(task.spawn(function()
         while isActive do
-            -- 1:1 server: math.random(700, 1200) / 100
             local waitTime = math.random(700, 1200) / 100
             if ReplicatedStorage:GetAttribute("3RoadsEvent") == true then
                 waitTime = waitTime / 3
